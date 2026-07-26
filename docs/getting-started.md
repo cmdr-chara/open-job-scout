@@ -5,7 +5,7 @@ application. OpenJobScout does not submit applications.
 
 ## 1. Requirements
 
-- Python 3.11 or newer
+- Python 3.11 or 3.12
 - `uv`
 - An internet connection for discovery and verification
 

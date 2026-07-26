@@ -5,7 +5,7 @@ tracciata. OpenJobScout non invia automaticamente candidature.
 
 ## 1. Requisiti
 
-- Python 3.11 o successivo
+- Python 3.11 oppure 3.12
 - `uv`
 - connessione Internet per ricerca e verifica
 

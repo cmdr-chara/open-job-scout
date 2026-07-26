@@ -28,7 +28,7 @@ an OpenJobScout server.
 
 Requirements:
 
-- Python 3.11 or newer
+- Python 3.11 or 3.12
 - [uv](https://docs.astral.sh/uv/)
 
 Install directly from a clone:
