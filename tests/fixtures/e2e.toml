@@ -25,5 +25,5 @@ junior_signals = ["junior", "graduate", "entry level"]
 concern_signals = ["unpaid", "mandatory relocation"]
 
 [storage]
-database = "G:/Lavoro/OpenJobScout/.e2e/jobs.sqlite3"
-report_directory = "G:/Lavoro/OpenJobScout/.e2e/reports"
+database = ".e2e/jobs.sqlite3"
+report_directory = ".e2e/reports"

@@ -21,7 +21,12 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Topic :: Office/Business",
 ]
-dependencies = ["python-jobspy>=1.1.82,<2"]
+# Temporary repository pin: PyPI's JobSpy 1.1.82 requires a vulnerable
+# markdownify release. Replace this with a normal release constraint once
+# upstream publishes the corrected dependency metadata.
+dependencies = [
+  "python-jobspy @ git+https://github.com/speedyapply/JobSpy.git@fda080a373e8226f3fd60635323f5da9af9892b1",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.9"]
@@ -31,10 +36,15 @@ jobscout = "open_job_scout.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/cmdr-chara/open-job-scout"
+Repository = "https://github.com/cmdr-chara/open-job-scout"
+Documentation = "https://github.com/cmdr-chara/open-job-scout#readme"
 Issues = "https://github.com/cmdr-chara/open-job-scout/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/open_job_scout"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

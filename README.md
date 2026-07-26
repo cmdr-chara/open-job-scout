@@ -31,8 +31,12 @@ an OpenJobScout server.
 
 Requirements:
 
+- [Git](https://git-scm.com/downloads)
 - Python 3.11 or 3.12
 - [uv](https://docs.astral.sh/uv/)
+
+The commands below use PowerShell. On macOS or Linux, use the matching shell
+syntax; OpenJobScout still uses `~/.openjobscout/` as its default data folder.
 
 Install directly from a clone:
 
@@ -71,7 +75,7 @@ jobscout search
 jobscout list --status new
 ```
 
-Open one result using the ID shown by `list`:
+Inspect one result using the ID shown by `list`:
 
 ```powershell
 jobscout show 425a56c785
@@ -85,7 +89,9 @@ jobscout mark 425a56c785 applied --note "Applied on the employer careers page"
 jobscout mark 425a56c785 interview --note "Technical interview on Friday"
 ```
 
-Generate a report:
+Each `search` and `import-csv` command also writes a timestamped Markdown
+snapshot automatically. Generate a fresh report from the current local tracker
+when you need one:
 
 ```powershell
 jobscout report
@@ -94,6 +100,11 @@ jobscout report --status interview
 
 JobSpy is installed as the default discovery engine. The tracker and CSV
 importer remain usable when a particular job board is unavailable.
+The Indeed adapter is temporarily disabled because its current upstream
+implementation does not verify TLS certificates; see [SECURITY.md](SECURITY.md).
+
+For every option, see the annotated
+[full configuration template](examples/config.example.toml).
 
 For the complete walkthrough, configuration reference, data locations, and
 troubleshooting, read:
@@ -114,17 +125,30 @@ uv run jobscout search
 ## Commands
 
 ```text
-jobscout init
+jobscout --version
+jobscout init [--output PATH] [--force]
 jobscout search [--config PATH] [--no-verify]
 jobscout import-csv FILE [--config PATH] [--no-verify]
-jobscout list [--config PATH] [--status new] [--limit 20]
+jobscout list [--config PATH] [--status STATUS] [--limit N]
 jobscout show ID [--config PATH]
-jobscout mark ID reviewed|applied|interview|rejected|offer|closed [--config PATH]
-jobscout report [--config PATH] [--output PATH]
+jobscout mark ID STATUS [--config PATH] [--note TEXT]
+jobscout report [--config PATH] [--status STATUS] [--limit N] [--output PATH]
 ```
 
 By default, personal state is written beneath `~/.openjobscout/`. The repository
 does not need to contain a CV, database, generated report, or private config.
+
+## Privacy and network use
+
+Your configuration, SQLite database, reports, notes, and any imported CSV stay
+on your machine. Put imported files in `data/` if you keep them beside the
+repository: that directory is ignored by Git. OpenJobScout does not submit a CV
+or an application.
+
+Discovery and verification do make network requests to the job boards you
+configure and to public job or ATS URLs in the results. Those services receive
+the requests they normally receive from your network connection; review their
+terms and privacy notices before using them.
 
 ## Scoring
 
@@ -136,9 +160,9 @@ recruiter will accept an application.
 ## Responsible use
 
 Job boards may rate-limit or prohibit some forms of automated access. Use modest
-query volumes, cache results, review the terms of each source, and prefer public
-ATS APIs or official careers pages. OpenJobScout does not bypass authentication,
-CAPTCHAs, or access controls.
+query volumes, avoid repeated runs, review the terms of each source, and prefer
+public ATS APIs or official careers pages. OpenJobScout does not bypass
+authentication, CAPTCHAs, or access controls.
 
 ## Development
 

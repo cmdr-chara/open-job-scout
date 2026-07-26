@@ -3,10 +3,14 @@
 This guide takes OpenJobScout from a fresh installation to a tracked
 application. OpenJobScout does not submit applications.
 
+Examples use Windows PowerShell. Equivalent commands work in another shell;
+the default data directory outside Windows is `~/.openjobscout/`.
+
 ## 1. Requirements
 
 - Python 3.11 or 3.12
 - `uv`
+- [Git](https://git-scm.com/downloads)
 - An internet connection for discovery and verification
 
 Install `uv` by following its
@@ -14,7 +18,7 @@ Install `uv` by following its
 
 ## 2. Install OpenJobScout
 
-From a repository clone:
+From a repository clone (you need access while the repository is private):
 
 ```powershell
 git clone https://github.com/cmdr-chara/open-job-scout.git
@@ -44,6 +48,10 @@ Default locations:
 | Database | `%USERPROFILE%\.openjobscout\jobs.sqlite3` |
 | Reports | `%USERPROFILE%\.openjobscout\reports\` |
 
+On macOS or Linux, the corresponding defaults are
+`~/.openjobscout/config.toml`, `~/.openjobscout/jobs.sqlite3`, and
+`~/.openjobscout/reports/`.
+
 Open the config on Windows:
 
 ```powershell
@@ -52,6 +60,9 @@ notepad "$env:USERPROFILE\.openjobscout\config.toml"
 
 Running `jobscout init` again does not overwrite an existing config. Use
 `jobscout init --force` only when replacing it intentionally.
+
+The [full configuration template](../examples/config.example.toml) documents
+every supported section in one place.
 
 ## 4. Configure discovery
 
@@ -72,7 +83,9 @@ max_age_days = 14
 
 Supported sources depend on JobSpy. Start with one or two sources and modest
 result counts. Google-specific queries are generated automatically from each
-configured search term.
+configured search term. Indeed is temporarily disabled because the current
+upstream adapter does not verify TLS certificates; see
+[SECURITY.md](../SECURITY.md).
 
 ## 5. Configure filtering and ranking
 
@@ -108,6 +121,7 @@ jobscout search --no-verify
 
 OpenJobScout deduplicates results, applies hard filters, checks reachable links
 and public ATS APIs, ranks retained jobs, and writes them to SQLite.
+It also writes a timestamped Markdown report to the configured report directory.
 
 ## 7. Review the shortlist
 
@@ -116,7 +130,8 @@ jobscout list --status new
 jobscout show JOB_ID
 ```
 
-`JOB_ID` can be the short ID printed by `list`.
+`JOB_ID` can be the short ID printed by `list`. `show` prints the complete local
+record as JSON; it does not open a browser page.
 
 Always open the canonical URL and confirm:
 
@@ -177,6 +192,10 @@ Common recognized fields include `title`, `company`, `job_url`,
 `job_url_direct`, `location`, `is_remote`, `job_type`, `description`,
 `date_posted`, `min_amount`, `max_amount`, and `currency`.
 
+An imported CSV can contain personal notes or a job-search history. Keep it
+outside version control; `data/` is ignored by the bundled `.gitignore` and is
+a good local location when working from this repository.
+
 ## Troubleshooting
 
 ### `jobscout` is not recognized
@@ -202,5 +221,8 @@ mirrors or submit personal data to unrelated pages.
 
 ### Where is personal data stored?
 
-Only in the configured local SQLite file and generated reports. Those paths are
-excluded from the repository by the default `.gitignore`.
+The configuration, SQLite database, reports, notes, and imported CSV stay on
+your machine. The program does make requests to configured job boards and to
+public job or ATS URLs while discovering or verifying listings. It does not
+upload a CV or submit applications. Local data paths and `data/` are excluded
+from the repository by the default `.gitignore`.

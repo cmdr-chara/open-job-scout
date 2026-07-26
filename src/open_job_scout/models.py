@@ -9,6 +9,18 @@ def normalize_text(value: str | None) -> str:
     return re.sub(r"\s+", " ", (value or "").strip().lower())
 
 
+def job_fingerprint(company: str, title: str, source_url: str) -> str:
+    """Return an identity that is stable when verification updates metadata."""
+    identity = "|".join(
+        (
+            normalize_text(company),
+            normalize_text(title),
+            normalize_text(source_url),
+        )
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
 @dataclass(slots=True)
 class Job:
     title: str
@@ -25,6 +37,7 @@ class Job:
     posted_at: str | None = None
     source: str = "import"
     canonical_url: str | None = None
+    original_canonical_url: str | None = None
     score: float = 0.0
     reasons: list[str] = field(default_factory=list)
     concerns: list[str] = field(default_factory=list)
@@ -33,11 +46,4 @@ class Job:
 
     @property
     def fingerprint(self) -> str:
-        identity = "|".join(
-            (
-                normalize_text(self.company),
-                normalize_text(self.title),
-                normalize_text(self.canonical_url or self.source_url),
-            )
-        )
-        return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        return job_fingerprint(self.company, self.title, self.source_url)

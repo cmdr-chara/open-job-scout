@@ -11,10 +11,13 @@ build/
 .e2e/
 
 # OpenJobScout keeps personal job-search data local.
+.openjobscout/
 data/
 reports/
 *.sqlite
 *.sqlite3
+*.sqlite-*
+*.sqlite3-*
 config.toml
 .env
 *.pdf

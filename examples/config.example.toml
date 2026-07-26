@@ -1,20 +1,26 @@
 [search]
+# Each term is searched separately, so start with a short focused list.
 terms = [
   "junior backend developer",
   "graduate software engineer",
 ]
+# Source names are passed to JobSpy. Indeed is temporarily disabled for safety.
 sites = ["linkedin"]
 location = "Italy"
+# JobSpy's country hint is used by some source adapters.
 country_indeed = "Italy"
 results_per_term = 20
 max_age_days = 14
 
 [profile]
+# When false, degree_policy controls listings with an explicit degree requirement.
 has_degree = true
-degree_policy = "penalize"
+# One of: "ignore", "penalize", "filter". Ignore makes no degree assumption.
+degree_policy = "ignore"
 degree_penalty = 15
 
 [filters]
+# Unknown remote status does not pass when this is true.
 require_remote = false
 allowed_employment_types = ["fulltime", "internship", "contract", ""]
 blocked_title_terms = [
@@ -28,11 +34,13 @@ blocked_description_terms = []
 max_required_years = 3
 
 [ranking]
+# These transparent signals only order your local review queue.
 preferred_title_terms = ["software engineer", "backend", "python"]
 preferred_skills = ["python", "django", "fastapi", "postgresql", "docker"]
 junior_signals = ["junior", "graduate", "entry level", "new grad", "internship"]
 concern_signals = ["on-site only", "unpaid", "mandatory relocation"]
 
 [storage]
+# Tilde paths resolve beneath the current user's home directory.
 database = "~/.openjobscout/jobs.sqlite3"
 report_directory = "~/.openjobscout/reports"

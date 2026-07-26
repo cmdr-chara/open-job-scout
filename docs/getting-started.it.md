@@ -3,16 +3,22 @@
 Questa guida porta OpenJobScout dall'installazione alla prima candidatura
 tracciata. OpenJobScout non invia automaticamente candidature.
 
+Gli esempi usano PowerShell su Windows. In macOS o Linux la sintassi della shell
+cambia, ma la cartella dati predefinita resta `~/.openjobscout/`.
+
 ## 1. Requisiti
 
 - Python 3.11 oppure 3.12
 - `uv`
+- [Git](https://git-scm.com/downloads)
 - connessione Internet per ricerca e verifica
 
 Per installare `uv`, usa la
 [guida ufficiale](https://docs.astral.sh/uv/getting-started/installation/).
 
 ## 2. Installazione
+
+Per clonare il repository finché è privato, serve avervi accesso.
 
 ```powershell
 git clone https://github.com/cmdr-chara/open-job-scout.git
@@ -43,8 +49,14 @@ Percorsi predefiniti:
 | Database | `%USERPROFILE%\.openjobscout\jobs.sqlite3` |
 | Report | `%USERPROFILE%\.openjobscout\reports\` |
 
+In macOS o Linux i percorsi equivalenti sono `~/.openjobscout/config.toml`,
+`~/.openjobscout/jobs.sqlite3` e `~/.openjobscout/reports/`.
+
 `jobscout init` non sovrascrive un file esistente. `--force` va usato soltanto
 quando vuoi sostituirlo deliberatamente.
+
+Il [template completo di configurazione](../examples/config.example.toml)
+mostra tutte le sezioni disponibili.
 
 ## 4. Fonti e ricerche
 
@@ -63,6 +75,9 @@ max_age_days = 14
 
 Inizia con poche query e volumi contenuti. Per Google, OpenJobScout passa
 automaticamente ogni termine al motore di discovery JobSpy.
+Indeed è temporaneamente disabilitato perché l'adapter upstream attuale non
+verifica i certificati TLS; trovi i dettagli in
+[SECURITY.md](../SECURITY.md).
 
 ## 5. Filtri e priorità
 
@@ -97,6 +112,9 @@ Per evitare la verifica online degli URL:
 jobscout search --no-verify
 ```
 
+Ogni ricerca e ogni importazione CSV crea anche un'istantanea Markdown con data
+e ora nella cartella dei report configurata.
+
 Per vedere tutti i dettagli di un risultato:
 
 ```powershell
@@ -104,6 +122,7 @@ jobscout show ID
 ```
 
 L'ID breve viene mostrato dal comando `list`.
+`show` stampa il record locale completo in JSON: non apre il browser.
 
 ## 7. Controllo manuale
 
@@ -165,6 +184,10 @@ Sono riconosciuti campi JobSpy come `title`, `company`, `job_url`,
 `job_url_direct`, `location`, `is_remote`, `job_type`, `description`,
 `date_posted`, `min_amount`, `max_amount` e `currency`.
 
+Un CSV importato può contenere note personali o lo storico delle ricerche.
+Tienilo fuori da Git: la cartella `data/` è già esclusa da `.gitignore` ed è un
+buon posto locale se lavori dalla cartella del progetto.
+
 ## Problemi comuni
 
 ### `jobscout` non viene riconosciuto
@@ -190,5 +213,8 @@ mirror sospetti per inviare dati personali.
 
 ### Dove vengono salvati i dati personali?
 
-Nel database SQLite e nei report locali configurati. `.gitignore` esclude
-database, report, configurazioni private e CV dal repository.
+Configurazione, database SQLite, report, note e CSV importati restano sul tuo
+computer. Il programma effettua però richieste ai job board configurati e agli
+URL pubblici dell'offerta o dell'ATS durante ricerca e verifica. Non carica il
+CV e non invia candidature. `.gitignore` esclude i dati locali e `data/` dal
+repository.
