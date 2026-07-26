@@ -18,7 +18,7 @@ Per installare `uv`, usa la
 
 ## 2. Installazione
 
-Per clonare il repository finché è privato, serve avervi accesso.
+Clona il repository pubblico:
 
 ```powershell
 git clone https://github.com/cmdr-chara/open-job-scout.git

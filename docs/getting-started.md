@@ -18,7 +18,7 @@ Install `uv` by following its
 
 ## 2. Install OpenJobScout
 
-From a repository clone (you need access while the repository is private):
+From the public repository:
 
 ```powershell
 git clone https://github.com/cmdr-chara/open-job-scout.git
