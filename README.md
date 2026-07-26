@@ -2,6 +2,9 @@
 
 **Find, verify, rank, and track jobs locally.**
 
+> 🇮🇹 **Preferisci l'italiano?**
+> Leggi la **[guida completa in italiano](docs/getting-started.it.md)**.
+
 OpenJobScout is a local-first, open-source job-search workbench. It discovers
 job listings, applies transparent filters, verifies links, stores results in
 SQLite, and tracks applications without uploading your CV or search history to
