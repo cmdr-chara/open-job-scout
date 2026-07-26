@@ -1,0 +1,29 @@
+[search]
+terms = ["junior software engineer"]
+sites = ["linkedin"]
+location = "Italy"
+country_indeed = "Italy"
+results_per_term = 20
+max_age_days = 14
+
+[profile]
+has_degree = true
+degree_policy = "penalize"
+degree_penalty = 15
+
+[filters]
+require_remote = false
+allowed_employment_types = ["fulltime", "internship", "contract", ""]
+blocked_title_terms = ["senior", "staff", "principal", "director", "head of"]
+blocked_description_terms = []
+max_required_years = 3
+
+[ranking]
+preferred_title_terms = ["software engineer", "backend", "python"]
+preferred_skills = ["python", "django", "fastapi", "postgresql", "docker"]
+junior_signals = ["junior", "graduate", "entry level", "new grad", "internship"]
+concern_signals = ["on-site only", "unpaid", "mandatory relocation"]
+
+[storage]
+database = "~/.openjobscout/jobs.sqlite3"
+report_directory = "~/.openjobscout/reports"

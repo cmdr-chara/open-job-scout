@@ -1,0 +1,22 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+.e2e/
+
+# OpenJobScout keeps personal job-search data local.
+data/
+reports/
+*.sqlite
+*.sqlite3
+config.toml
+.env
+*.pdf
+*.doc
+*.docx

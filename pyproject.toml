@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openjobscout"
+version = "0.1.0"
+description = "Find, verify, rank, and track jobs locally."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "OpenJobScout contributors" }]
+keywords = ["jobs", "job-search", "career", "cli", "sqlite", "privacy"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Office/Business",
+]
+dependencies = ["python-jobspy>=1.1.82,<2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.9"]
+
+[project.scripts]
+jobscout = "open_job_scout.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/cmdr-chara/open-job-scout"
+Issues = "https://github.com/cmdr-chara/open-job-scout/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/open_job_scout"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

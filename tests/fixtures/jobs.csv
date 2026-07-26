@@ -1,0 +1,3 @@
+title,company,job_url,is_remote,job_type,min_amount,max_amount,currency,salary_source,description,date_posted,site
+Junior Python Backend Engineer,Example Labs,https://example.test/jobs/1,true,fulltime,40000,50000,EUR,description,"Build APIs with Python, FastAPI, PostgreSQL and Docker.",2026-07-25,fixture
+Senior Platform Engineer,Example Labs,https://example.test/jobs/2,true,fulltime,70000,90000,EUR,direct_data,"Lead the platform team.",2026-07-25,fixture
