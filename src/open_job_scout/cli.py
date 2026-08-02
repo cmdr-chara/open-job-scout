@@ -18,6 +18,7 @@ from .database import (
     get_jobs_by_fingerprints,
     list_jobs,
     mark_job,
+    mark_stale_jobs,
     save_jobs,
 )
 from .discovery import deduplicate, discover, import_csv
@@ -61,6 +62,7 @@ def _collect_and_save(jobs: list, args: argparse.Namespace, config: dict | None 
     retained, rejected, unique_count = process_jobs(jobs, config, verify=not args.no_verify)
     database, report_dir = storage_paths(config)
     stored = save_jobs(retained, database)
+    stale = mark_stale_jobs(database, int(config["storage"].get("stale_after_days", 30)))
     current_rows = get_jobs_by_fingerprints(database, (job.fingerprint for job in retained))
     report = write_markdown(
         current_rows,
@@ -78,6 +80,8 @@ def _collect_and_save(jobs: list, args: argparse.Namespace, config: dict | None 
         details = ", ".join(f"{status}={count}" for status, count in sorted(verification.items()))
         print(f"Verification: {details}")
     print(f"Stored or refreshed: {stored}")
+    if stale:
+        print(f"Marked stale: {stale}")
     print(f"Database: {database}")
     print(f"Report: {report}")
     return 0
@@ -231,12 +235,12 @@ def build_parser() -> argparse.ArgumentParser:
     mark_parser = subparsers.add_parser(
         "mark",
         help="Update application status",
-        description="Set the application state and optionally replace its note.",
+        description="Set the application state and optionally append a note.",
     )
     add_config_argument(mark_parser)
     mark_parser.add_argument("id", metavar="ID", help="full or unambiguous short job ID")
     mark_parser.add_argument("status", choices=sorted(VALID_STATUSES), help="new application state")
-    mark_parser.add_argument("--note", help="replace the note stored with this job")
+    mark_parser.add_argument("--note", help="append a note to this job's history")
     mark_parser.set_defaults(handler=cmd_mark)
 
     report_parser = subparsers.add_parser(

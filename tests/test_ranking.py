@@ -70,3 +70,42 @@ def test_degree_policy_can_filter_or_ignore() -> None:
 
     settings["profile"]["degree_policy"] = "ignore"
     assert filter_job(job, settings) == (True, None)
+
+
+def test_hybrid_text_beats_remote_scraper_flag() -> None:
+    settings = config()
+    settings["filters"]["require_remote"] = True
+    job = Job(
+        title="Backend Engineer",
+        company="Example",
+        source_url="https://example.test/job",
+        remote=True,
+        description="Hybrid role with two days per week in the office.",
+    )
+    assert filter_job(job, settings) == (
+        False,
+        "fully remote work not confirmed (hybrid)",
+    )
+
+
+def test_published_salary_can_filter_and_rank_without_estimation() -> None:
+    settings = config()
+    settings["salary"]["minimum_annual"] = 45_000
+    low = Job(
+        title="Backend Engineer",
+        company="Example",
+        source_url="https://example.test/low",
+        salary_max=40_000,
+        currency="EUR",
+    )
+    assert filter_job(low, settings) == (False, "published salary below 45000")
+
+    high = Job(
+        title="Backend Engineer",
+        company="Example",
+        source_url="https://example.test/high",
+        salary_max=60_000,
+        currency="EUR",
+    )
+    ranked = rank_job(high, settings)
+    assert "published salary: 60000 EUR" in ranked.reasons

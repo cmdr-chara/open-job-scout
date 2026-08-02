@@ -175,3 +175,39 @@ def test_same_role_with_different_direct_urls_stays_separate(tmp_path: Path) -> 
     save_jobs([first, second], database)
 
     assert len(list_jobs(database)) == 2
+
+
+def test_automatically_closed_job_reopens_when_seen_active(tmp_path: Path) -> None:
+    database = tmp_path / "jobs.sqlite3"
+    job = sample_job()
+    job.verification_status = "closed"
+    save_jobs([job], database)
+    job.verification_status = "verified"
+    save_jobs([job], database)
+    assert find_job(database, job.fingerprint[:10])["status"] == "new"
+
+
+def test_notes_append_instead_of_overwriting(tmp_path: Path) -> None:
+    database = tmp_path / "jobs.sqlite3"
+    job = sample_job()
+    save_jobs([job], database)
+    mark_job(database, job.fingerprint[:10], "reviewed", "First note")
+    mark_job(database, job.fingerprint[:10], "applied", "Second note")
+    notes = find_job(database, job.fingerprint[:10])["notes"]
+    assert notes.startswith("First note\n[")
+    assert notes.endswith("] Second note")
+
+
+def test_old_unreviewed_job_becomes_stale(tmp_path: Path) -> None:
+    from open_job_scout.database import mark_stale_jobs
+
+    database = tmp_path / "jobs.sqlite3"
+    job = sample_job()
+    save_jobs([job], database)
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE jobs SET last_seen_at='2020-01-01T00:00:00+00:00' WHERE fingerprint=?",
+            (job.fingerprint,),
+        )
+    assert mark_stale_jobs(database, stale_after_days=1) == 1
+    assert find_job(database, job.fingerprint[:10])["status"] == "stale"

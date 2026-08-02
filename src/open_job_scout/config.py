@@ -81,12 +81,35 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
     ):
         _string_list(ranking, "ranking", key, allow_empty=True)
 
+    salary = config.get("salary", {})
+    if not isinstance(salary, Mapping):
+        raise ValueError("Config section [salary] must be a table.")
+    for key in (
+        "minimum_annual",
+        "preferred_annual",
+        "unknown_penalty",
+        "preferred_bonus",
+    ):
+        value = salary.get(key, 0)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            raise ValueError(f"Config value [salary].{key} must be a number >= 0.")
+    unknown_policy = salary.get("unknown_policy", "allow")
+    if unknown_policy not in {"allow", "filter"}:
+        raise ValueError("Config value [salary].unknown_policy must be allow or filter.")
+    if (
+        salary.get("preferred_annual", 0)
+        and salary.get("minimum_annual", 0) > salary["preferred_annual"]
+    ):
+        raise ValueError("Config value [salary].minimum_annual must not exceed preferred_annual.")
+
     storage = _section(config, "storage")
     for key in ("database", "report_directory"):
         value = storage.get(key)
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"Config value [storage].{key} must be a non-empty path string.")
 
+    if "stale_after_days" in storage:
+        _integer(storage, "storage", "stale_after_days", minimum=1)
     profile = config.get("profile", {})
     if not isinstance(profile, Mapping):
         raise ValueError("Config section [profile] must be a table.")

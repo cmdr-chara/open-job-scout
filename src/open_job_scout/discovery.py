@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from .models import Job
+from .models import Job, job_dedup_key
 
 _MISSING_VALUES = {"", "<na>", "na", "nan", "nat", "none", "null"}
 _MAX_DESCRIPTION_CHARS = 1_000_000
@@ -150,27 +150,28 @@ def discover(config: dict[str, Any]) -> list[Job]:
     failures: list[str] = []
     completed = 0
     for term in settings["terms"]:
-        print(f"Searching: {term}", file=sys.stderr, flush=True)
-        try:
-            frame = scrape_jobs(
-                site_name=sites,
-                search_term=term,
-                google_search_term=term,
-                location=settings["location"],
-                results_wanted=int(settings["results_per_term"]),
-                hours_old=int(settings["max_age_days"]) * 24,
-                country_indeed=settings.get("country_indeed", "USA"),
-                linkedin_fetch_description=True,
-                # Avoid JobSpy's HTML-to-Markdown dependency. OpenJobScout strips
-                # the returned HTML with the standard-library parser above.
-                description_format="html",
-                verbose=1,
-                enforce_annual_salary=True,
-            )
-            collected.extend(row_to_job(row) for row in frame.to_dict(orient="records"))
-            completed += 1
-        except Exception as exc:  # A failed source must not discard completed searches.
-            failures.append(f"{term}: {type(exc).__name__}: {exc}")
+        for site in sites:
+            print(f"Searching {site}: {term}", file=sys.stderr, flush=True)
+            try:
+                frame = scrape_jobs(
+                    site_name=[site],
+                    search_term=term,
+                    google_search_term=term,
+                    location=settings["location"],
+                    results_wanted=int(settings["results_per_term"]),
+                    hours_old=int(settings["max_age_days"]) * 24,
+                    country_indeed=settings.get("country_indeed", "USA"),
+                    linkedin_fetch_description=True,
+                    # Avoid JobSpy's HTML-to-Markdown dependency. OpenJobScout strips
+                    # the returned HTML with the standard-library parser above.
+                    description_format="html",
+                    verbose=1,
+                    enforce_annual_salary=True,
+                )
+                collected.extend(row_to_job(row) for row in frame.to_dict(orient="records"))
+                completed += 1
+            except Exception as exc:  # One source must not discard successful sources.
+                failures.append(f"{site}/{term}: {type(exc).__name__}: {exc}")
     if failures:
         print("Some searches failed:", file=sys.stderr)
         for failure in failures:
@@ -184,7 +185,11 @@ def deduplicate(jobs: Iterable[Job]) -> list[Job]:
     unique: dict[str, Job] = {}
     for job in jobs:
         if job.title and job.company and job.source_url:
-            current = unique.get(job.fingerprint)
-            if current is None or len(job.description) > len(current.description):
-                unique[job.fingerprint] = job
+            key = job_dedup_key(job)
+            current = unique.get(key)
+            if current is None or (
+                bool(job.canonical_url),
+                len(job.description),
+            ) > (bool(current.canonical_url), len(current.description)):
+                unique[key] = job
     return list(unique.values())

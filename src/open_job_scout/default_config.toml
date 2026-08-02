@@ -31,7 +31,18 @@ preferred_skills = ["python", "django", "fastapi", "postgresql", "docker"]
 junior_signals = ["junior", "graduate", "entry level", "new grad", "internship"]
 concern_signals = ["on-site only", "unpaid", "mandatory relocation"]
 
+[salary]
+# Salary is never estimated. These settings only use compensation published by the employer.
+minimum_annual = 0
+preferred_annual = 50000
+# One of: "allow", "filter". Keep "allow" unless salary disclosure is mandatory.
+unknown_policy = "allow"
+unknown_penalty = 0
+preferred_bonus = 10
+
 [storage]
 # Tilde paths resolve beneath the current user's home directory.
 database = "~/.openjobscout/jobs.sqlite3"
 report_directory = "~/.openjobscout/reports"
+# Unreviewed jobs not seen for this many days become stale, never silently deleted.
+stale_after_days = 30
