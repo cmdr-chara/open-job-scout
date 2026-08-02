@@ -35,6 +35,51 @@ PREFERENCE_SIGNALS = (
     "gradit",
 )
 
+HYBRID_SIGNALS = (
+    "hybrid",
+    "ibrido",
+    "partly remote",
+    "days per week in the office",
+    "giorni a settimana in ufficio",
+)
+ONSITE_SIGNALS = (
+    "on-site",
+    "onsite",
+    "office-based",
+    "in office",
+    "in sede",
+    "in ufficio",
+    "not remote",
+    "no remote",
+    "non remoto",
+    "no smart working",
+)
+REMOTE_SIGNALS = (
+    "fully remote",
+    "full remote",
+    "remote-first",
+    "remote within",
+    "remote from",
+    "work from home",
+    "da remoto",
+)
+
+
+def classify_work_mode(job: Job) -> str:
+    """Classify conservatively: explicit hybrid/on-site language beats scraper flags."""
+    text = normalize_text(f"{job.title} {job.location or ''} {job.description}")
+    if any(signal in text for signal in HYBRID_SIGNALS):
+        return "hybrid"
+    if any(signal in text for signal in ONSITE_SIGNALS):
+        return "onsite"
+    if job.work_mode in {"remote", "hybrid", "onsite"}:
+        return job.work_mode
+    if job.remote is True or any(signal in text for signal in REMOTE_SIGNALS):
+        return "remote"
+    if job.remote is False:
+        return "onsite"
+    return "unknown"
+
 
 def age_days(value: str | None) -> int | None:
     if not value:
@@ -91,8 +136,9 @@ def filter_job(job: Job, config: dict[str, Any]) -> tuple[bool, str | None]:
     filters = config["filters"]
     title = normalize_text(job.title)
     body = normalize_text(job.description)
-    if filters.get("require_remote") and job.remote is not True:
-        return False, "remote work not confirmed"
+    job.work_mode = classify_work_mode(job)
+    if filters.get("require_remote") and job.work_mode != "remote":
+        return False, f"fully remote work not confirmed ({job.work_mode})"
     if any(contains_term(title, term) for term in filters.get("blocked_title_terms", [])):
         return False, "blocked seniority or title"
     if any(contains_term(body, term) for term in filters.get("blocked_description_terms", [])):
@@ -114,6 +160,14 @@ def filter_job(job: Job, config: dict[str, Any]) -> tuple[bool, str | None]:
     days = age_days(job.posted_at)
     if days is not None and days > int(config["search"].get("max_age_days", 30)):
         return False, f"listing is {days} days old"
+
+    salary = config.get("salary", {})
+    minimum = float(salary.get("minimum_annual", 0))
+    known_high = job.salary_max if job.salary_max is not None else job.salary_min
+    if known_high is not None and known_high < minimum:
+        return False, f"published salary below {minimum:g}"
+    if known_high is None and salary.get("unknown_policy", "allow") == "filter":
+        return False, "salary not published"
     return True, None
 
 
@@ -121,6 +175,7 @@ def rank_job(job: Job, config: dict[str, Any]) -> Job:
     ranking = config["ranking"]
     text = normalize_text(f"{job.title} {job.description}")
     title = normalize_text(job.title)
+    job.work_mode = classify_work_mode(job)
     skills = [value for value in ranking.get("preferred_skills", []) if contains_term(text, value)]
     title_hits = [
         value for value in ranking.get("preferred_title_terms", []) if contains_term(title, value)
@@ -129,11 +184,32 @@ def rank_job(job: Job, config: dict[str, Any]) -> Job:
     concerns = [value for value in ranking.get("concern_signals", []) if contains_term(text, value)]
 
     score = len(skills) * 5 + len(title_hits) * 12 + len(junior) * 7
-    if job.remote is True:
+    if job.work_mode == "remote":
         score += 8
     if job.verification_status == "verified":
         score += 5
     score -= len(concerns) * 8
+    if job.verification_status == "closed":
+        concerns.append("listing closed")
+        score -= 100
+    elif job.verification_status == "unreachable":
+        concerns.append("listing could not be verified")
+        score -= 15
+
+    salary = config.get("salary", {})
+    known_salary = job.salary_max if job.salary_max is not None else job.salary_min
+    preferred_salary = float(salary.get("preferred_annual", 0))
+    if known_salary is not None and preferred_salary > 0 and known_salary >= preferred_salary:
+        score += float(salary.get("preferred_bonus", 10))
+    elif known_salary is None:
+        score -= float(salary.get("unknown_penalty", 0))
+
+    if job.work_mode == "hybrid":
+        concerns.append("hybrid work")
+    elif job.work_mode == "onsite":
+        concerns.append("on-site work")
+    elif job.work_mode == "unknown":
+        concerns.append("work mode unconfirmed")
 
     profile = config.get("profile", {})
     if (
@@ -152,7 +228,12 @@ def rank_job(job: Job, config: dict[str, Any]) -> Job:
         job.reasons.append(f"skills: {', '.join(skills)}")
     if junior:
         job.reasons.append(f"early-career signals: {', '.join(junior)}")
-    if job.remote is True:
-        job.reasons.append("remote declared")
+    if job.work_mode == "remote":
+        job.reasons.append("fully remote")
+    if known_salary is not None:
+        currency = job.currency or ""
+        job.reasons.append(f"published salary: {known_salary:g} {currency}".strip())
+    elif salary.get("unknown_penalty", 0):
+        concerns.append("salary not published")
     job.concerns = concerns
     return job

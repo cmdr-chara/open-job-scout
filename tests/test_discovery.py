@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from open_job_scout.discovery import _plain_description, deduplicate, discover, row_to_job
+from open_job_scout.models import Job
 
 
 def test_jobspy_row_mapping() -> None:
@@ -147,3 +148,53 @@ def test_indeed_is_disabled_before_loading_jobspy() -> None:
     }
     with pytest.raises(RuntimeError, match="Indeed source is temporarily disabled"):
         discover(settings)
+
+
+def test_deduplicate_ignores_tracking_parameters() -> None:
+    first = Job(
+        title="Backend Engineer",
+        company="Example",
+        source_url="https://board.example/jobs/1?utm_source=linkedin",
+        canonical_url="https://careers.example/jobs/1?utm_campaign=social",
+    )
+    second = Job(
+        title=first.title,
+        company=first.company,
+        source_url="https://board.example/jobs/1",
+        canonical_url="https://careers.example/jobs/1",
+        description="Richer official description",
+    )
+    result = deduplicate([first, second])
+    assert len(result) == 1
+    assert result[0].description == "Richer official description"
+
+
+def test_discovery_isolates_source_failures(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class Frame:
+        @staticmethod
+        def to_dict(*, orient: str) -> list[dict]:
+            assert orient == "records"
+            return [{"title": "Engineer", "company": "Example", "job_url": "https://x.test/1"}]
+
+    def fake_scrape_jobs(**kwargs):
+        site = kwargs["site_name"][0]
+        calls.append(site)
+        if site == "linkedin":
+            raise TimeoutError("source timed out")
+        return Frame()
+
+    monkeypatch.setitem(sys.modules, "jobspy", SimpleNamespace(scrape_jobs=fake_scrape_jobs))
+    settings = {
+        "search": {
+            "terms": ["backend engineer"],
+            "sites": ["linkedin", "google"],
+            "location": "Italy",
+            "results_per_term": 5,
+            "max_age_days": 7,
+        }
+    }
+
+    assert len(discover(settings)) == 1
+    assert calls == ["linkedin", "google"]

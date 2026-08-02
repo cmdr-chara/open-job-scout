@@ -5,13 +5,22 @@ import os
 import sqlite3
 from collections.abc import Iterable
 from contextlib import closing
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .models import Job, job_fingerprint, normalize_text
 
-VALID_STATUSES = {"new", "reviewed", "applied", "interview", "rejected", "offer", "closed"}
-SCHEMA_VERSION = 1
+VALID_STATUSES = {
+    "new",
+    "reviewed",
+    "applied",
+    "interview",
+    "rejected",
+    "offer",
+    "closed",
+    "stale",
+}
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -20,6 +29,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     company TEXT NOT NULL,
     location TEXT,
     remote INTEGER,
+    work_mode TEXT NOT NULL DEFAULT 'unknown',
     employment_type TEXT,
     salary_min REAL,
     salary_max REAL,
@@ -35,10 +45,13 @@ CREATE TABLE IF NOT EXISTS jobs (
     concerns TEXT NOT NULL DEFAULT '[]',
     verification_status TEXT NOT NULL DEFAULT 'unverified',
     verification_source TEXT,
+    replacement_url TEXT,
+    replacement_title TEXT,
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'new',
     status_updated_at TEXT,
+    status_manually_set INTEGER NOT NULL DEFAULT 0,
     notes TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status_score ON jobs(status, score DESC);
@@ -152,6 +165,23 @@ def _reconcile_legacy_job(connection: sqlite3.Connection, job: Job) -> None:
         _merge_identity_rows(connection, job.fingerprint, matches)
 
 
+def _migrate_schema_v2(connection: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(jobs)")}
+    additions = {
+        "work_mode": "TEXT NOT NULL DEFAULT 'unknown'",
+        "replacement_url": "TEXT",
+        "replacement_title": "TEXT",
+        "status_manually_set": "INTEGER NOT NULL DEFAULT 0",
+    }
+    for name, definition in additions.items():
+        if name not in columns:
+            connection.execute(f"ALTER TABLE jobs ADD COLUMN {name} {definition}")
+    connection.execute(
+        "UPDATE jobs SET status_manually_set=1 "
+        "WHERE status IN ('reviewed','applied','interview','rejected','offer')"
+    )
+
+
 def connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     existed = path.exists()
@@ -170,7 +200,12 @@ def connect(path: Path) -> sqlite3.Connection:
         if version < 1:
             with connection:
                 _migrate_fingerprints(connection)
-                connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                connection.execute("PRAGMA user_version = 1")
+            version = 1
+        if version < 2:
+            with connection:
+                _migrate_schema_v2(connection)
+                connection.execute("PRAGMA user_version = 2")
         if not existed and os.name != "nt":
             path.chmod(0o600)
     except Exception:
@@ -188,41 +223,48 @@ def save_jobs(jobs: Iterable[Job], path: Path) -> int:
             connection.execute(
                 """
                 INSERT INTO jobs (
-                    fingerprint,title,company,location,remote,employment_type,
+                    fingerprint,title,company,location,remote,work_mode,employment_type,
                     salary_min,salary_max,currency,salary_source,description,posted_at,
                     source,source_url,canonical_url,score,reasons,concerns,
-                    verification_status,verification_source,first_seen_at,last_seen_at,status
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    verification_status,verification_source,replacement_url,replacement_title,
+                    first_seen_at,last_seen_at,status,status_manually_set
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(fingerprint) DO UPDATE SET
                     title=excluded.title,
                     company=excluded.company,
                     location=excluded.location,
                     remote=excluded.remote,
+                    work_mode=excluded.work_mode,
                     employment_type=excluded.employment_type,
-                    salary_min=excluded.salary_min,
-                    salary_max=excluded.salary_max,
-                    currency=excluded.currency,
-                    salary_source=excluded.salary_source,
+                    salary_min=COALESCE(excluded.salary_min,jobs.salary_min),
+                    salary_max=COALESCE(excluded.salary_max,jobs.salary_max),
+                    currency=COALESCE(excluded.currency,jobs.currency),
+                    salary_source=COALESCE(excluded.salary_source,jobs.salary_source),
                     description=excluded.description,
                     posted_at=excluded.posted_at,
                     source=excluded.source,
                     source_url=excluded.source_url,
-                    canonical_url=excluded.canonical_url,
+                    canonical_url=COALESCE(excluded.canonical_url,jobs.canonical_url),
                     score=excluded.score,
                     reasons=excluded.reasons,
                     concerns=excluded.concerns,
                     verification_status=excluded.verification_status,
                     verification_source=excluded.verification_source,
+                    replacement_url=excluded.replacement_url,
+                    replacement_title=excluded.replacement_title,
                     last_seen_at=excluded.last_seen_at,
                     status=CASE
-                        WHEN jobs.status IN ('new', 'reviewed')
-                             AND excluded.verification_status='closed'
-                        THEN 'closed'
+                        WHEN jobs.status_manually_set=1 THEN jobs.status
+                        WHEN excluded.verification_status='closed' THEN 'closed'
+                        WHEN jobs.status IN ('closed','stale') THEN 'new'
                         ELSE jobs.status
                     END,
                     status_updated_at=CASE
-                        WHEN jobs.status IN ('new', 'reviewed')
-                             AND excluded.verification_status='closed'
+                        WHEN jobs.status_manually_set=1 THEN jobs.status_updated_at
+                        WHEN excluded.verification_status='closed' AND jobs.status<>'closed'
+                        THEN excluded.last_seen_at
+                        WHEN excluded.verification_status<>'closed'
+                             AND jobs.status IN ('closed','stale')
                         THEN excluded.last_seen_at
                         ELSE jobs.status_updated_at
                     END
@@ -233,6 +275,7 @@ def save_jobs(jobs: Iterable[Job], path: Path) -> int:
                     job.company,
                     job.location,
                     job.remote,
+                    job.work_mode,
                     job.employment_type,
                     job.salary_min,
                     job.salary_max,
@@ -248,9 +291,12 @@ def save_jobs(jobs: Iterable[Job], path: Path) -> int:
                     json.dumps(job.concerns, ensure_ascii=False),
                     job.verification_status,
                     job.verification_source,
+                    job.replacement_url,
+                    job.replacement_title,
                     now,
                     now,
                     "closed" if job.verification_status == "closed" else "new",
+                    0,
                 ),
             )
             count += 1
@@ -297,6 +343,23 @@ def find_job(path: Path, identifier: str) -> sqlite3.Row:
     return rows[0]
 
 
+def mark_stale_jobs(path: Path, stale_after_days: int = 30) -> int:
+    cutoff = (datetime.now(UTC) - timedelta(days=stale_after_days)).isoformat()
+    now = datetime.now(UTC).isoformat()
+    with closing(connect(path)) as connection, connection:
+        cursor = connection.execute(
+            """
+            UPDATE jobs
+            SET status='stale', status_updated_at=?
+            WHERE status_manually_set=0
+              AND status IN ('new','reviewed')
+              AND last_seen_at < ?
+            """,
+            (now, cutoff),
+        )
+        return cursor.rowcount
+
+
 def mark_job(path: Path, identifier: str, status: str, note: str | None = None) -> None:
     if status not in VALID_STATUSES:
         raise ValueError(f"Invalid status: {status}")
@@ -305,11 +368,24 @@ def mark_job(path: Path, identifier: str, status: str, note: str | None = None) 
     with closing(connect(path)) as connection, connection:
         if note is None:
             connection.execute(
-                "UPDATE jobs SET status=?, status_updated_at=? WHERE fingerprint=?",
+                """
+                UPDATE jobs
+                SET status=?, status_updated_at=?, status_manually_set=1
+                WHERE fingerprint=?
+                """,
                 (status, now, row["fingerprint"]),
             )
         else:
             connection.execute(
-                "UPDATE jobs SET status=?, status_updated_at=?, notes=? WHERE fingerprint=?",
-                (status, now, note, row["fingerprint"]),
+                """
+                UPDATE jobs
+                SET status=?, status_updated_at=?, status_manually_set=1,
+                    notes=CASE
+                        WHEN notes='' THEN ?
+                        WHEN notes=? OR notes LIKE '%' || char(10) || ? THEN notes
+                        ELSE notes || char(10) || '[' || ? || '] ' || ?
+                    END
+                WHERE fingerprint=?
+                """,
+                (status, now, note, note, note, now, note, row["fingerprint"]),
             )

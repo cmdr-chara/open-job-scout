@@ -43,11 +43,11 @@ notepad "$env:USERPROFILE\.openjobscout\config.toml"
 
 Percorsi predefiniti:
 
-| Contenuto | Percorso Windows |
-| --- | --- |
-| Configurazione | `%USERPROFILE%\.openjobscout\config.toml` |
-| Database | `%USERPROFILE%\.openjobscout\jobs.sqlite3` |
-| Report | `%USERPROFILE%\.openjobscout\reports\` |
+| Contenuto      | Percorso Windows                           |
+| -------------- | ------------------------------------------ |
+| Configurazione | `%USERPROFILE%\.openjobscout\config.toml`  |
+| Database       | `%USERPROFILE%\.openjobscout\jobs.sqlite3` |
+| Report         | `%USERPROFILE%\.openjobscout\reports\`     |
 
 In macOS o Linux i percorsi equivalenti sono `~/.openjobscout/config.toml`,
 `~/.openjobscout/jobs.sqlite3` e `~/.openjobscout/reports/`.
@@ -94,6 +94,15 @@ preferred_title_terms = ["software engineer", "backend", "python"]
 preferred_skills = ["python", "django", "fastapi", "postgresql", "docker"]
 junior_signals = ["junior", "graduate", "entry level", "new grad"]
 concern_signals = ["unpaid", "on-site only"]
+```
+
+```toml
+[salary]
+minimum_annual = 0
+preferred_annual = 50000
+unknown_policy = "allow"
+unknown_penalty = 0
+preferred_bonus = 10
 ```
 
 Il punteggio ordina la coda da esaminare. Non è un punteggio ATS e non predice
@@ -158,6 +167,7 @@ interview
 rejected
 offer
 closed
+stale
 ```
 
 Una ricerca successiva non sovrascrive gli stati importanti come `applied`,

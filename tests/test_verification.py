@@ -122,3 +122,92 @@ def test_verification_falls_back_to_source_listing(monkeypatch) -> None:
     ]
     assert verified.verification_status == "reachable"
     assert verified.canonical_url == "https://board.example/jobs/1"
+
+
+def test_closed_ashby_job_suggests_unique_same_title_successor(monkeypatch) -> None:
+    old_url = "https://jobs.ashbyhq.com/acme/old-id"
+    new_url = "https://jobs.ashbyhq.com/acme/new-id"
+
+    monkeypatch.setattr(
+        "open_job_scout.verification.resolve_url",
+        lambda url: ("closed", url, ""),
+    )
+    monkeypatch.setattr(
+        "open_job_scout.verification.request_json",
+        lambda _url: {
+            "jobs": [
+                {
+                    "title": "Backend Engineer",
+                    "jobUrl": new_url,
+                    "applyUrl": f"{new_url}/application",
+                    "isListed": True,
+                }
+            ]
+        },
+    )
+    job = Job(
+        title="Backend Engineer",
+        company="Acme",
+        source_url=old_url,
+        canonical_url=old_url,
+    )
+
+    verified = verify_job(job)
+    assert verified.verification_status == "closed"
+    assert verified.replacement_url == new_url
+    assert verified.replacement_title == "Backend Engineer"
+
+
+def test_lever_verification_imports_structured_salary(monkeypatch) -> None:
+    url = "https://jobs.eu.lever.co/acme/posting-id"
+    monkeypatch.setattr(
+        "open_job_scout.verification.resolve_url",
+        lambda value: ("reachable", value, ""),
+    )
+    monkeypatch.setattr(
+        "open_job_scout.verification.request_json",
+        lambda _url: {
+            "hostedUrl": url,
+            "salaryRange": {
+                "min": 50_000,
+                "max": 70_000,
+                "currency": "EUR",
+                "interval": "per-year-salary",
+            },
+            "workplaceType": "remote",
+        },
+    )
+
+    verified = verify_job(Job(title="Engineer", company="Acme", source_url=url))
+    assert verified.verification_status == "verified"
+    assert verified.salary_min == 50_000
+    assert verified.salary_max == 70_000
+    assert verified.salary_source == "lever"
+    assert verified.work_mode == "remote"
+
+
+def test_recruitee_public_offer_is_verified(monkeypatch) -> None:
+    url = "https://acme.recruitee.com/o/backend-engineer"
+    assert detect_ats(url) == ("recruitee", ("acme", "backend-engineer"))
+    monkeypatch.setattr(
+        "open_job_scout.verification.resolve_url",
+        lambda value: ("reachable", value, ""),
+    )
+    monkeypatch.setattr(
+        "open_job_scout.verification.request_json",
+        lambda _url: {
+            "offers": [
+                {
+                    "slug": "backend-engineer",
+                    "title": "Backend Engineer",
+                    "careers_url": url,
+                    "remote": True,
+                }
+            ]
+        },
+    )
+
+    verified = verify_job(Job(title="Backend Engineer", company="Acme", source_url=url))
+    assert verified.verification_status == "verified"
+    assert verified.verification_source == "recruitee"
+    assert verified.work_mode == "remote"

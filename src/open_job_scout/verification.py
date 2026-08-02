@@ -10,7 +10,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from html.parser import HTMLParser
 
-from .models import Job
+from .models import Job, normalize_text
 
 USER_AGENT = "OpenJobScout/0.1 (+https://github.com/cmdr-chara/open-job-scout)"
 MAX_HTML_BYTES = 1_000_000
@@ -171,6 +171,10 @@ def detect_ats(url: str) -> tuple[str, tuple[str, ...]] | None:
         return "lever", (region, segments[0], segments[1])
     if host == "jobs.ashbyhq.com" and len(segments) >= 2:
         return "ashby", (segments[0], segments[1])
+    if host.endswith(".recruitee.com") and len(segments) >= 2 and segments[-2] == "o":
+        company = host.removesuffix(".recruitee.com")
+        if company:
+            return "recruitee", (company, segments[-1])
     return None
 
 
@@ -204,6 +208,121 @@ def _ashby_job_matches(item: object, board: str, posting: str) -> bool:
     return False
 
 
+def _set_salary(
+    job: Job,
+    minimum: object,
+    maximum: object,
+    currency: object,
+    source: str,
+    *,
+    cents: bool = False,
+) -> None:
+    try:
+        low = float(minimum) if minimum is not None else None
+        high = float(maximum) if maximum is not None else None
+    except (TypeError, ValueError):
+        return
+    divisor = 100 if cents else 1
+    job.salary_min = low / divisor if low is not None and low >= 0 else None
+    job.salary_max = high / divisor if high is not None and high >= 0 else None
+    job.currency = str(currency) if currency else job.currency
+    job.salary_source = source
+
+
+def _enrich_greenhouse(job: Job, payload: dict) -> None:
+    ranges = payload.get("pay_input_ranges")
+    if isinstance(ranges, list) and ranges and isinstance(ranges[0], dict):
+        value = ranges[0]
+        context = normalize_text(f"{value.get('title', '')} {value.get('blurb', '')}")
+        if any(signal in context for signal in ("annual", "per year", "yearly", "/year")):
+            _set_salary(
+                job,
+                value.get("min_cents"),
+                value.get("max_cents"),
+                value.get("currency_type"),
+                "greenhouse",
+                cents=True,
+            )
+
+
+def _enrich_lever(job: Job, payload: dict) -> None:
+    salary = payload.get("salaryRange")
+    if isinstance(salary, dict) and salary.get("interval") == "per-year-salary":
+        _set_salary(
+            job,
+            salary.get("min"),
+            salary.get("max"),
+            salary.get("currency"),
+            "lever",
+        )
+    workplace = normalize_text(payload.get("workplaceType"))
+    if workplace in {"remote", "hybrid", "onsite", "on site"}:
+        job.work_mode = "onsite" if workplace in {"onsite", "on site"} else workplace
+        job.remote = job.work_mode == "remote"
+
+
+def _enrich_ashby(job: Job, item: dict) -> None:
+    workplace = normalize_text(item.get("workplaceType"))
+    if workplace in {"remote", "hybrid", "onsite", "on site"}:
+        job.work_mode = "onsite" if workplace in {"onsite", "on site"} else workplace
+    if isinstance(item.get("isRemote"), bool):
+        job.remote = item["isRemote"]
+        if job.work_mode == "unknown":
+            job.work_mode = "remote" if job.remote else "onsite"
+    description = item.get("descriptionPlain")
+    if isinstance(description, str) and len(description) > len(job.description):
+        job.description = description
+    if item.get("publishedAt"):
+        job.posted_at = str(item["publishedAt"])
+
+
+def _suggest_ashby_replacement(job: Job, payload: dict, board: str, posting: str) -> None:
+    candidates = [
+        item
+        for item in payload.get("jobs", [])
+        if isinstance(item, dict)
+        and item.get("isListed", True)
+        and normalize_text(item.get("title")) == normalize_text(job.title)
+        and not _ashby_job_matches(item, board, posting)
+    ]
+    if len(candidates) != 1:
+        return
+    candidate = candidates[0]
+    replacement = candidate.get("jobUrl") or candidate.get("applyUrl")
+    if isinstance(replacement, str):
+        job.replacement_url = replacement
+        job.replacement_title = str(candidate.get("title") or job.title)
+
+
+def _recruitee_offer(payload: dict, slug: str) -> dict | None:
+    offers = payload.get("offers", [])
+    return next(
+        (
+            offer
+            for offer in offers
+            if isinstance(offer, dict) and str(offer.get("slug") or "") == slug
+        ),
+        None,
+    )
+
+
+def _suggest_recruitee_replacement(job: Job, payload: dict, slug: str) -> None:
+    candidates = [
+        offer
+        for offer in payload.get("offers", [])
+        if isinstance(offer, dict)
+        and str(offer.get("slug") or "") != slug
+        and normalize_text(offer.get("title")) == normalize_text(job.title)
+    ]
+    if len(candidates) != 1:
+        return
+    candidate = candidates[0]
+    replacement = candidate.get("careers_url") or candidate.get("url")
+    if isinstance(replacement, str):
+        job.replacement_url = replacement
+        job.replacement_title = str(candidate.get("title") or job.title)
+
+
 def verify_job(job: Job) -> Job:
     targets = list(dict.fromkeys(value for value in (job.canonical_url, job.source_url) if value))
     status, resolved = "unreachable", job.source_url
@@ -211,14 +330,17 @@ def verify_job(job: Job) -> Job:
         status, resolved, _ = resolve_url(target)
         if status != "unreachable":
             break
-    if status != "reachable":
-        job.verification_status = status
-        return job
-    job.canonical_url = resolved
-    job.verification_status = "reachable"
-    detected = detect_ats(resolved)
+
+    job.verification_status = status
+    if status == "reachable":
+        job.canonical_url = resolved
+    detected = detect_ats(resolved) or next(
+        (candidate for target in targets if (candidate := detect_ats(target))),
+        None,
+    )
     if not detected:
         return job
+
     provider, values = detected
     try:
         if provider == "greenhouse":
@@ -229,6 +351,7 @@ def verify_job(job: Job) -> Job:
                 "?pay_transparency=true"
             )
             job.canonical_url = str(payload.get("absolute_url") or resolved)
+            _enrich_greenhouse(job, payload)
         elif provider == "lever":
             region, site, posting = values
             host = "api.eu.lever.co" if region == "eu" else "api.lever.co"
@@ -237,6 +360,20 @@ def verify_job(job: Job) -> Job:
                 f"{urllib.parse.quote(posting)}"
             )
             job.canonical_url = str(payload.get("applyUrl") or payload.get("hostedUrl") or resolved)
+            _enrich_lever(job, payload)
+        elif provider == "recruitee":
+            company, slug = values
+            payload = request_json(
+                f"https://{urllib.parse.quote(company)}.recruitee.com/api/offers/"
+            )
+            matched = _recruitee_offer(payload, slug)
+            if matched is None:
+                _suggest_recruitee_replacement(job, payload, slug)
+                raise LookupError("posting is absent from the Recruitee careers site")
+            job.canonical_url = str(matched.get("careers_url") or matched.get("url") or resolved)
+            if isinstance(matched.get("remote"), bool):
+                job.remote = matched["remote"]
+                job.work_mode = "remote" if job.remote else job.work_mode
         else:
             board, posting = values
             payload = request_json(
@@ -252,8 +389,10 @@ def verify_job(job: Job) -> Job:
                 None,
             )
             if matched is None:
+                _suggest_ashby_replacement(job, payload, board, posting)
                 raise LookupError("posting is absent from the Ashby board")
             job.canonical_url = str(matched.get("applyUrl") or matched.get("jobUrl") or resolved)
+            _enrich_ashby(job, matched)
         job.verification_status = "verified"
         job.verification_source = provider
     except urllib.error.HTTPError as exc:

@@ -41,6 +41,13 @@ def _amount(value: object) -> str:
     return f"{number:,.0f}" if number.is_integer() else f"{number:,.2f}"
 
 
+def _value(row: Mapping, key: str, default: object = None) -> object:
+    try:
+        return row[key]
+    except (KeyError, IndexError):
+        return default
+
+
 def write_markdown(rows: Iterable[Mapping], output: Path) -> Path:
     rows = list(rows)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -57,10 +64,15 @@ def write_markdown(rows: Iterable[Mapping], output: Path) -> Path:
                 f"{_amount(row['salary_min'])}-{_amount(row['salary_max'])} "
                 f"{_inline(row['currency'])}"
             ).strip()
+            if salary_source := _value(row, "salary_source"):
+                salary += f" (source: {_inline(salary_source)})"
+        work_mode = _inline(_value(row, "work_mode", "unknown")) or "unknown"
         title = _inline(row["title"])
         company = _inline(row["company"])
         canonical_url = row["canonical_url"]
         source_url = row["source_url"]
+        replacement_url = _value(row, "replacement_url")
+        replacement_title = _value(row, "replacement_title")
         lines.extend(
             [
                 f"## {index}. {title} - {company}",
@@ -71,6 +83,7 @@ def write_markdown(rows: Iterable[Mapping], output: Path) -> Path:
                 f"- Location: {_inline(row['location']) or 'not provided'}",
                 f"- Remote: {_remote_label(row['remote'])}",
                 f"- Employment: {_inline(row['employment_type']) or 'not provided'}",
+                f"- Work mode: {work_mode}",
                 f"- Salary: {salary}",
                 f"- Posted: {_inline(row['posted_at']) or 'not provided'}",
                 f"- Source: {_inline(row['source']) or 'not provided'}",
@@ -84,6 +97,14 @@ def write_markdown(rows: Iterable[Mapping], output: Path) -> Path:
                     else []
                 ),
                 *([f"- Notes: {_inline(row['notes'])}"] if row["notes"] else []),
+                *(
+                    [
+                        f"- Suggested successor: [{_inline(replacement_title or 'open role')}]"
+                        f"(<{_url(replacement_url)}>)"
+                    ]
+                    if replacement_url
+                    else []
+                ),
                 "",
             ]
         )

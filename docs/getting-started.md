@@ -42,11 +42,11 @@ jobscout init
 
 Default locations:
 
-| Data | Windows path |
-| --- | --- |
-| Config | `%USERPROFILE%\.openjobscout\config.toml` |
+| Data     | Windows path                               |
+| -------- | ------------------------------------------ |
+| Config   | `%USERPROFILE%\.openjobscout\config.toml`  |
 | Database | `%USERPROFILE%\.openjobscout\jobs.sqlite3` |
-| Reports | `%USERPROFILE%\.openjobscout\reports\` |
+| Reports  | `%USERPROFILE%\.openjobscout\reports\`     |
 
 On macOS or Linux, the corresponding defaults are
 `~/.openjobscout/config.toml`, `~/.openjobscout/jobs.sqlite3`, and
@@ -102,6 +102,15 @@ preferred_title_terms = ["software engineer", "backend", "python"]
 preferred_skills = ["python", "django", "fastapi", "postgresql", "docker"]
 junior_signals = ["junior", "graduate", "entry level", "new grad"]
 concern_signals = ["unpaid", "on-site only"]
+```
+
+```toml
+[salary]
+minimum_annual = 0
+preferred_annual = 50000
+unknown_policy = "allow"
+unknown_penalty = 0
+preferred_bonus = 10
 ```
 
 The score orders the local review queue. It is not an ATS score and does not
@@ -164,6 +173,7 @@ interview
 rejected
 offer
 closed
+stale
 ```
 
 A refreshed listing does not overwrite an `applied`, `interview`, `rejected`,

@@ -17,13 +17,15 @@ an OpenJobScout server.
 
 - Local SQLite database; no account required.
 - Transparent keyword scoring, never presented as an "ATS score".
-- Search through JobSpy or import an existing CSV.
-- Link and public ATS verification.
-- Stale Google results are retained as history and marked `closed` when the
-  official page returns `404`/`410`, displays an expiration message, or is
-  absent from its public ATS API.
+- Search through JobSpy or import an existing CSV; each source fails independently.
+- Conservative `remote`, `hybrid`, `onsite`, or `unknown` classification.
+- Link and public ATS verification, with employer-published compensation when
+  an ATS exposes it as structured data.
+- Expired results are retained as `closed`; a unique same-title Ashby successor
+  is shown as a suggestion and never substituted automatically.
+- Unreviewed records not seen for the configured interval become `stale`.
 - Application states: `new`, `reviewed`, `applied`, `interview`, `rejected`,
-  `offer`, and `closed`.
+  `offer`, `closed`, and `stale`. Manual states survive crawler refreshes.
 - Markdown reports suitable for review or archival.
 - No automatic applications.
 
