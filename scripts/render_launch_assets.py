@@ -76,11 +76,13 @@ def render_social_preview() -> Path:
     draw = ImageDraw.Draw(image)
 
     draw.rectangle((0, 0, 18, 640), fill=TEAL)
-    draw.text((64, 57), "openjobscout(1)", font=font(22, bold=True, mono=True), fill=TEAL)
-    draw.line((64, 96, 653, 96), fill="#B8BCB9", width=2)
+    draw.text((64, 48), "OpenJobScout", font=font(38, bold=True), fill=INK)
+    draw.text((350, 63), "v0.1.0", font=font(15, mono=True), fill=TEAL)
+    draw.text((66, 94), "LOCAL JOB DISCOVERY AND TRACKING", font=font(14, mono=True), fill=TEAL)
+    draw.line((64, 128, 653, 128), fill="#B8BCB9", width=2)
 
-    draw.text((64, 142), "A local job", font=font(60, bold=True, mono=True), fill=INK)
-    draw.text((64, 210), "search queue.", font=font(60, bold=True, mono=True), fill=INK)
+    draw.text((64, 166), "Search, verify,", font=font(54, bold=True), fill=INK)
+    draw.text((64, 230), "rank, and track.", font=font(54, bold=True), fill=INK)
 
     labels = [
         ("discover", "JobSpy or CSV"),
@@ -172,7 +174,7 @@ def render_demo() -> Path:
         image = Image.new("RGB", (1000, 563), PAPER)
         draw = ImageDraw.Draw(image)
         draw.rectangle((0, 0, 12, 563), fill=TEAL)
-        draw.text((42, 30), "openjobscout(1)", font=font(24, bold=True, mono=True), fill=INK)
+        draw.text((42, 26), "OpenJobScout", font=font(27, bold=True), fill=INK)
         draw.text((765, 37), "bundled sample data", font=font(13, mono=True), fill=TEAL)
         draw_terminal(image, (42, 86, 958, 525), demo_lines(stage), line_height=25, font_size=16)
         frames.append(image)
