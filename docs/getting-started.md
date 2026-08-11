@@ -10,7 +10,6 @@ the default data directory outside Windows is `~/.openjobscout/`.
 
 - Python 3.11 or 3.12
 - `uv`
-- [Git](https://git-scm.com/downloads)
 - An internet connection for discovery and verification
 
 Install `uv` by following its
@@ -18,12 +17,10 @@ Install `uv` by following its
 
 ## 2. Install OpenJobScout
 
-From the public repository:
+Install the command directly from the public repository:
 
 ```powershell
-git clone https://github.com/cmdr-chara/open-job-scout.git
-cd open-job-scout
-uv tool install .
+uv tool install git+https://github.com/cmdr-chara/open-job-scout.git
 ```
 
 Confirm that the command is available:
@@ -32,7 +29,8 @@ Confirm that the command is available:
 jobscout --help
 ```
 
-For development, use `uv sync --extra dev` and prefix commands with `uv run`.
+For development, clone the repository, run `uv sync --extra dev`, and prefix
+commands with `uv run`.
 
 ## 3. Create the local configuration
 

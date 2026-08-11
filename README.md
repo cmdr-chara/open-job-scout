@@ -2,13 +2,17 @@
 
 **Find, verify, rank, and track jobs locally.**
 
+[![CI](https://github.com/cmdr-chara/open-job-scout/actions/workflows/ci.yml/badge.svg)](https://github.com/cmdr-chara/open-job-scout/actions/workflows/ci.yml)
+[![Python 3.11–3.12](https://img.shields.io/badge/Python-3.11%20%7C%203.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f.svg)](LICENSE)
+
 > 🇮🇹 **Preferisci l'italiano?**
 > Leggi la **[guida completa in italiano](docs/getting-started.it.md)**.
 
-OpenJobScout is a local-first, open-source job-search workbench. It discovers
-job listings, applies transparent filters, verifies links, stores results in
-SQLite, and tracks applications without uploading your CV or search history to
-an OpenJobScout server.
+OpenJobScout searches job boards, filters and ranks listings with rules you can
+inspect, checks whether links are still live, and keeps your applications in a
+local SQLite database. There is no OpenJobScout account and no hosted server
+receiving your CV, notes, or search history.
 
 > Alpha software: always confirm a listing on the employer's official careers
 > page before applying.
@@ -33,21 +37,18 @@ an OpenJobScout server.
 
 Requirements:
 
-- [Git](https://git-scm.com/downloads)
 - Python 3.11 or 3.12
 - [uv](https://docs.astral.sh/uv/)
 
-The commands below use PowerShell. On macOS or Linux, use the matching shell
-syntax; OpenJobScout still uses `~/.openjobscout/` as its default data folder.
-
-Install directly from a clone:
+Install the command directly from GitHub:
 
 ```powershell
-git clone https://github.com/cmdr-chara/open-job-scout.git
-cd open-job-scout
-uv tool install .
+uv tool install git+https://github.com/cmdr-chara/open-job-scout.git
 jobscout init
 ```
+
+The commands work in PowerShell, macOS, and Linux shells. OpenJobScout stores
+its configuration and data under `~/.openjobscout/` by default.
 
 The `init` command creates:
 
@@ -76,6 +77,28 @@ Run the first search:
 jobscout search
 jobscout list --status new
 ```
+
+## Example
+
+This is the output produced by importing the two listings in the bundled
+sample CSV. One matches the configured junior backend search; the senior role
+is filtered out.
+
+```text
+Received: 2
+Unique valid jobs: 2
+Accepted: 1
+Filtered out: 1
+Verification: unverified=1
+Stored or refreshed: 1
+
+ID          SCORE  STATUS     ROLE
+425a56c785   59.0  new        Junior Python Backend Engineer - Example Labs
+```
+
+`jobscout show 425a56c785` explains the score instead of hiding it behind a
+match percentage: title terms, requested skills, junior signals, work location,
+and any configured concerns are listed separately.
 
 Inspect one result using the ID shown by `list`:
 
