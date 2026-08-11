@@ -10,7 +10,6 @@ cambia, ma la cartella dati predefinita resta `~/.openjobscout/`.
 
 - Python 3.11 oppure 3.12
 - `uv`
-- [Git](https://git-scm.com/downloads)
 - connessione Internet per ricerca e verifica
 
 Per installare `uv`, usa la
@@ -18,18 +17,18 @@ Per installare `uv`, usa la
 
 ## 2. Installazione
 
-Clona il repository pubblico:
+Installa il comando direttamente dal repository pubblico:
 
 ```powershell
-git clone https://github.com/cmdr-chara/open-job-scout.git
-cd open-job-scout
-uv tool install .
+uv tool install git+https://github.com/cmdr-chara/open-job-scout.git
 jobscout --help
 ```
 
 Per lavorare sul codice:
 
 ```powershell
+git clone https://github.com/cmdr-chara/open-job-scout.git
+cd open-job-scout
 uv sync --extra dev
 uv run jobscout --help
 ```
