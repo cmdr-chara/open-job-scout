@@ -6,6 +6,8 @@
 [![Python 3.11–3.12](https://img.shields.io/badge/Python-3.11%20%7C%203.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f.svg)](LICENSE)
 
+![OpenJobScout: local-first job search, verification, ranking, and tracking](docs/assets/openjobscout-social-preview.png)
+
 > 🇮🇹 **Preferisci l'italiano?**
 > Leggi la **[guida completa in italiano](docs/getting-started.it.md)**.
 
@@ -33,6 +35,14 @@ receiving your CV, notes, or search history.
 - Markdown reports suitable for review or archival.
 - No automatic applications.
 
+## Demo
+
+The animation uses the two fictional listings included in
+[`tests/fixtures/jobs.csv`](tests/fixtures/jobs.csv). No live job board is
+contacted for this demonstration.
+
+![OpenJobScout terminal walkthrough](docs/assets/openjobscout-demo.gif)
+
 ## Quick start
 
 Requirements:
@@ -43,7 +53,7 @@ Requirements:
 Install the command directly from GitHub:
 
 ```powershell
-uv tool install git+https://github.com/cmdr-chara/open-job-scout.git
+uv tool install git+https://github.com/cmdr-chara/open-job-scout.git@v0.1.0
 jobscout init
 ```
 
@@ -93,7 +103,7 @@ Verification: unverified=1
 Stored or refreshed: 1
 
 ID          SCORE  STATUS     ROLE
-425a56c785   59.0  new        Junior Python Backend Engineer - Example Labs
+425a56c785   69.0  new        Junior Python Backend Engineer - Example Labs
 ```
 
 `jobscout show 425a56c785` explains the score instead of hiding it behind a
@@ -196,6 +206,7 @@ uv run pytest
 uv run ruff check .
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+See [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
+[SECURITY.md](SECURITY.md).
 Third-party attribution is recorded in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -20,7 +20,7 @@ Per installare `uv`, usa la
 Installa il comando direttamente dal repository pubblico:
 
 ```powershell
-uv tool install git+https://github.com/cmdr-chara/open-job-scout.git
+uv tool install git+https://github.com/cmdr-chara/open-job-scout.git@v0.1.0
 jobscout --help
 ```
 
