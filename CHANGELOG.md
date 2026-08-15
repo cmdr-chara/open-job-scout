@@ -15,6 +15,15 @@
   permission checks, report-storage diagnostics, source safety, and JobSpy availability.
 - Restrict newly initialized config files to mode `0600` on Unix-like systems, matching
   the existing database privacy behavior.
+- Make `jobscout show` human-readable by default while retaining `--json` for scripts and
+  `--full` for the complete description.
+- Add `jobscout next` for a focused highest-priority review workflow, with optional queue
+  filters and browser opening.
+- Add `jobscout open` to launch the canonical employer URL or original source listing.
+- Add `jobscout note` so notes can be recorded without changing application state or
+  manual-state ownership.
+- Add short aliases (`ls`, `view`, and `log`) plus contextual terminal tips and a more
+  useful top-level help workflow.
 
 ## 0.1.0 - 2026-08-11
 
