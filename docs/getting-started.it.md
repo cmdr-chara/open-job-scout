@@ -49,7 +49,9 @@ Percorsi predefiniti:
 | Report         | `%USERPROFILE%\.openjobscout\reports\`     |
 
 In macOS o Linux i percorsi equivalenti sono `~/.openjobscout/config.toml`,
-`~/.openjobscout/jobs.sqlite3` e `~/.openjobscout/reports/`.
+`~/.openjobscout/jobs.sqlite3` e `~/.openjobscout/reports/`. I nuovi file di
+configurazione e database usano permessi `0600` sui sistemi Unix-like, così non
+sono leggibili dagli altri utenti locali per impostazione predefinita.
 
 `jobscout init` non sovrascrive un file esistente. `--force` va usato soltanto
 quando vuoi sostituirlo deliberatamente.
@@ -132,6 +134,14 @@ jobscout show ID
 L'ID breve viene mostrato dal comando `list`.
 `show` stampa il record locale completo in JSON: non apre il browser.
 
+La coda può essere filtrata per stato, modalità di lavoro, fonte, punteggio
+minimo e testo libero, e ordinata per punteggio oppure per ultima scoperta:
+
+```powershell
+jobscout list --status new --work-mode remote --min-score 60 --query python
+jobscout list --source linkedin --sort newest
+```
+
 ## 7. Controllo manuale
 
 Prima di candidarti, apri sempre il collegamento ufficiale e controlla:
@@ -146,7 +156,7 @@ Google può mostrare risultati scaduti. Se la pagina ufficiale restituisce
 `404`, `410`, mostra “Job not found” oppure l'offerta non esiste più nell'ATS,
 OpenJobScout conserva lo storico con stato `closed`.
 
-## 8. Stato della candidatura
+## 8. Stato della candidatura e cronologia
 
 ```powershell
 jobscout mark ID reviewed
@@ -172,17 +182,61 @@ stale
 Una ricerca successiva non sovrascrive gli stati importanti come `applied`,
 `interview`, `rejected` oppure `offer`.
 
-## 9. Report
+Lo schema v3 conserva anche una cronologia persistente per ogni offerta:
+
+```powershell
+jobscout history ID
+jobscout history ID --json
+```
+
+La cronologia registra scoperta, cambiamenti di verifica, transizioni
+automatiche, modifiche manuali dello stato, note e uno snapshot iniziale quando
+un database creato con una versione precedente viene migrato.
+
+## 9. Riverifica senza rifare la ricerca
+
+`recheck` serve a controllare nuovamente gli URL già presenti nel tracker senza
+eseguire un'altra ricerca sui job board:
+
+```powershell
+jobscout recheck ID
+jobscout recheck ID_ALTRO
+```
+
+Puoi anche riverificare una parte filtrata della coda:
+
+```powershell
+jobscout recheck --status new --work-mode remote --min-score 60
+jobscout recheck --status closed --limit 20
+```
+
+Il limite predefinito è 50 per evitare raffiche involontarie di richieste.
+`--workers` controlla il parallelismo della verifica.
+
+La riverifica aggiorna stato di verifica, dati ATS e ranking, ma non modifica
+`last_seen_at`: l'offerta non è stata riscoperta da una fonte. Un'offerta
+`closed` automaticamente può tornare `new` se risulta di nuovo attiva. Gli
+stati impostati manualmente restano invariati, e `stale` resta `stale` finché
+una ricerca successiva non ritrova davvero l'offerta.
+
+## 10. Report, export e statistiche
 
 ```powershell
 jobscout report
 jobscout report --status applied
 jobscout report --status interview --output colloqui.md
+jobscout export --status applied --format csv
+jobscout export --work-mode remote --min-score 70 --format json
+jobscout stats
 ```
 
-I report sono istantanee Markdown. Il database SQLite resta la fonte principale.
+Report Markdown ed export CSV/JSON accettano gli stessi filtri della coda.
+`stats` riepiloga stati, fonti, modalità di lavoro, copertura salariale,
+punteggio medio e migliori offerte nuove.
 
-## 10. Importazione CSV
+Il database SQLite resta la fonte principale.
+
+## 11. Importazione CSV
 
 ```powershell
 jobscout import-csv .\jobs.csv
@@ -197,6 +251,26 @@ Un CSV importato può contenere note personali o lo storico delle ricerche.
 Tienilo fuori da Git: la cartella `data/` è già esclusa da `.gitignore` ed è un
 buon posto locale se lavori dalla cartella del progetto.
 
+## 12. Diagnostica locale
+
+Prima di investigare manualmente un problema di ricerca o database, esegui:
+
+```powershell
+jobscout doctor
+jobscout doctor --json
+```
+
+`doctor` controlla:
+
+- validità della configurazione;
+- fonti disabilitate come l'attuale adapter Indeed;
+- compatibilità dello schema SQLite e `PRAGMA quick_check`;
+- permessi dei file config/database sui sistemi Unix-like;
+- possibilità di scrivere nella cartella report;
+- disponibilità di JobSpy.
+
+Non avvia una ricerca reale sui job board.
+
 ## Problemi comuni
 
 ### `jobscout` non viene riconosciuto
@@ -209,6 +283,7 @@ uv run jobscout --help
 
 ### Una fonte non restituisce risultati
 
+- Esegui prima `jobscout doctor`.
 - Prova una sola query e una sola fonte.
 - Riduci `results_per_term`.
 - Controlla la località.
@@ -218,12 +293,15 @@ uv run jobscout --help
 ### Google mostra `Job not found`
 
 È un risultato rimasto nell'indice. L'offerta deve restare `closed`; non usare
-mirror sospetti per inviare dati personali.
+mirror sospetti per inviare dati personali. In seguito puoi usare
+`jobscout recheck ID` per verificare se la pagina ufficiale è tornata attiva
+senza alterare la data di ultima scoperta.
 
 ### Dove vengono salvati i dati personali?
 
-Configurazione, database SQLite, report, note e CSV importati restano sul tuo
-computer. Il programma effettua però richieste ai job board configurati e agli
-URL pubblici dell'offerta o dell'ATS durante ricerca e verifica. Non carica il
-CV e non invia candidature. `.gitignore` esclude i dati locali e `data/` dal
-repository.
+Configurazione, database SQLite, report, note, cronologia eventi e CSV importati
+restano sul tuo computer. Il programma effettua però richieste ai job board
+configurati e agli URL pubblici dell'offerta o dell'ATS durante ricerca e
+verifica. `recheck` esegue soltanto la parte di verifica degli URL pubblici.
+OpenJobScout non carica il CV e non invia candidature. `.gitignore` esclude i
+dati locali e `data/` dal repository.
