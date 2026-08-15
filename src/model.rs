@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, str::FromStr};
 
 use ratatui::style::Color;
 
@@ -25,6 +25,19 @@ impl ApplicationStatus {
         Self::Closed,
         Self::Stale,
     ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::New => "new",
+            Self::Reviewed => "reviewed",
+            Self::Applied => "applied",
+            Self::Interview => "interview",
+            Self::Rejected => "rejected",
+            Self::Offer => "offer",
+            Self::Closed => "closed",
+            Self::Stale => "stale",
+        }
+    }
 
     pub const fn label(self) -> &'static str {
         match self {
@@ -53,9 +66,27 @@ impl ApplicationStatus {
     }
 }
 
+impl FromStr for ApplicationStatus {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "new" => Ok(Self::New),
+            "reviewed" => Ok(Self::Reviewed),
+            "applied" => Ok(Self::Applied),
+            "interview" => Ok(Self::Interview),
+            "rejected" => Ok(Self::Rejected),
+            "offer" => Ok(Self::Offer),
+            "closed" => Ok(Self::Closed),
+            "stale" => Ok(Self::Stale),
+            other => Err(format!("invalid application status: {other}")),
+        }
+    }
+}
+
 impl fmt::Display for ApplicationStatus {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.label())
+        formatter.write_str(self.as_str())
     }
 }
 
@@ -68,6 +99,15 @@ pub enum WorkMode {
 }
 
 impl WorkMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Remote => "remote",
+            Self::Hybrid => "hybrid",
+            Self::Onsite => "onsite",
+            Self::Unknown => "unknown",
+        }
+    }
+
     pub const fn label(self) -> &'static str {
         match self {
             Self::Remote => "Remote",
@@ -78,9 +118,23 @@ impl WorkMode {
     }
 }
 
+impl FromStr for WorkMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "remote" => Ok(Self::Remote),
+            "hybrid" => Ok(Self::Hybrid),
+            "onsite" | "on-site" => Ok(Self::Onsite),
+            "unknown" | "" => Ok(Self::Unknown),
+            other => Err(format!("invalid work mode: {other}")),
+        }
+    }
+}
+
 impl fmt::Display for WorkMode {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.label())
+        formatter.write_str(self.as_str())
     }
 }
 
@@ -91,257 +145,164 @@ pub struct Job {
     pub company: String,
     pub location: String,
     pub work_mode: WorkMode,
+    pub employment_type: Option<String>,
     pub status: ApplicationStatus,
-    pub score: u8,
-    pub salary: Option<String>,
+    pub score: f64,
+    pub salary_min: Option<f64>,
+    pub salary_max: Option<f64>,
+    pub currency: Option<String>,
+    pub salary_source: Option<String>,
     pub source: String,
+    pub source_url: String,
+    pub canonical_url: Option<String>,
     pub verification: String,
+    pub verification_source: Option<String>,
+    pub replacement_url: Option<String>,
+    pub replacement_title: Option<String>,
     pub posted: String,
-    pub skills: Vec<String>,
+    pub first_seen: String,
+    pub last_seen: String,
+    pub status_updated_at: Option<String>,
+    pub status_manually_set: bool,
+    pub reasons: Vec<String>,
     pub concerns: Vec<String>,
     pub description: String,
-    pub url: String,
+    pub notes: String,
 }
 
 impl Job {
     pub fn search_blob(&self) -> String {
         format!(
-            "{} {} {} {} {} {}",
+            "{} {} {} {} {} {} {} {}",
             self.title,
             self.company,
             self.location,
             self.source,
-            self.skills.join(" "),
-            self.description
+            self.reasons.join(" "),
+            self.concerns.join(" "),
+            self.description,
+            self.notes,
         )
         .to_lowercase()
     }
+
+    pub fn salary_label(&self) -> String {
+        if self.salary_min.is_none() && self.salary_max.is_none() {
+            return "Salary not published".into();
+        }
+        let amount = |value: Option<f64>| match value {
+            Some(value) if value.is_finite() => format!("{value:.0}"),
+            _ => "?".into(),
+        };
+        let mut label = if self.salary_min == self.salary_max && self.salary_min.is_some() {
+            amount(self.salary_min)
+        } else {
+            format!("{}–{}", amount(self.salary_min), amount(self.salary_max))
+        };
+        if let Some(currency) = self.currency.as_deref().filter(|value| !value.is_empty()) {
+            label.push(' ');
+            label.push_str(currency);
+        }
+        if let Some(source) = self.salary_source.as_deref().filter(|value| !value.is_empty()) {
+            label.push_str(" · ");
+            label.push_str(source);
+        }
+        label
+    }
+
+    pub fn preferred_url(&self) -> &str {
+        self.canonical_url
+            .as_deref()
+            .filter(|url| !url.is_empty())
+            .unwrap_or(&self.source_url)
+    }
+
+    pub fn short_id(&self) -> &str {
+        let end = self.id.len().min(10);
+        &self.id[..end]
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct JobEvent {
+    pub event_type: String,
+    pub old_value: Option<String>,
+    pub new_value: Option<String>,
+    pub note: Option<String>,
+    pub created_at: String,
 }
 
 pub fn demo_jobs() -> Vec<Job> {
-    vec![
-        Job {
-            id: "8f1a9d45e2".into(),
-            title: "Junior Backend Engineer".into(),
-            company: "Northstar Labs".into(),
-            location: "Italy · Remote".into(),
-            work_mode: WorkMode::Remote,
-            status: ApplicationStatus::New,
-            score: 94,
-            salary: Some("€48k–€62k".into()),
+    ApplicationStatus::ALL
+        .iter()
+        .enumerate()
+        .map(|(index, status)| Job {
+            id: format!("demo{index:06}"),
+            title: match status {
+                ApplicationStatus::New => "Junior Backend Engineer",
+                ApplicationStatus::Reviewed => "Python Developer",
+                ApplicationStatus::Applied => "Software Engineer I",
+                ApplicationStatus::Interview => "Backend Software Engineer",
+                ApplicationStatus::Rejected => "API Engineer",
+                ApplicationStatus::Offer => "Associate Software Engineer",
+                ApplicationStatus::Closed => "Entry-Level Developer",
+                ApplicationStatus::Stale => "Junior Data Engineer",
+            }
+            .into(),
+            company: [
+                "Northstar Labs",
+                "Orbit Finance",
+                "Canvas Works",
+                "Keystone",
+                "Luma Health",
+                "Mosaic Travel",
+                "Juniper Studio",
+                "Blue Atlas",
+            ][index]
+                .into(),
+            location: if index % 2 == 0 {
+                "Italy · Remote".into()
+            } else {
+                "Milan · Hybrid".into()
+            },
+            work_mode: if index % 2 == 0 {
+                WorkMode::Remote
+            } else {
+                WorkMode::Hybrid
+            },
+            employment_type: Some("fulltime".into()),
+            status: *status,
+            score: 94.0 - index as f64 * 3.0,
+            salary_min: Some(42_000.0),
+            salary_max: Some(58_000.0),
+            currency: Some("EUR".into()),
+            salary_source: Some("employer".into()),
             source: "Greenhouse".into(),
-            verification: "Verified".into(),
-            posted: "2h ago".into(),
-            skills: vec!["Python".into(), "FastAPI".into(), "PostgreSQL".into(), "Docker".into()],
-            concerns: vec!["3 years preferred".into()],
-            description: "Join a small product team building APIs used by thousands of customers. The role emphasizes pragmatic backend engineering, mentorship, testing, and gradual ownership. Strong Python fundamentals matter more than having worked with every tool in the stack.".into(),
-            url: "https://example.test/northstar/backend".into(),
-        },
-        Job {
-            id: "d25b72c8b4".into(),
-            title: "Graduate Software Engineer".into(),
-            company: "Tandem Cloud".into(),
-            location: "Milan · Hybrid".into(),
-            work_mode: WorkMode::Hybrid,
-            status: ApplicationStatus::New,
-            score: 91,
-            salary: Some("€38k–€46k".into()),
-            source: "Lever".into(),
-            verification: "Verified".into(),
-            posted: "5h ago".into(),
-            skills: vec!["Go".into(), "APIs".into(), "Kubernetes".into(), "SQL".into()],
-            concerns: vec![],
-            description: "A structured graduate position with pairing, a dedicated mentor, and rotations through platform and product teams. You will ship production code from the first month while learning cloud infrastructure and service ownership.".into(),
-            url: "https://example.test/tandem/graduate".into(),
-        },
-        Job {
-            id: "4b6c019aa7".into(),
-            title: "Python Developer".into(),
-            company: "Orbit Finance".into(),
-            location: "Europe · Remote".into(),
-            work_mode: WorkMode::Remote,
-            status: ApplicationStatus::Reviewed,
-            score: 89,
-            salary: Some("€52k–€68k".into()),
-            source: "Ashby".into(),
-            verification: "Verified".into(),
-            posted: "1d ago".into(),
-            skills: vec!["Python".into(), "Django".into(), "PostgreSQL".into(), "Redis".into()],
-            concerns: vec!["Fintech experience preferred".into()],
-            description: "Work on internal and customer-facing financial services with a strong emphasis on correctness, observability, and maintainable Python. The team runs a modern Django stack and encourages engineers to propose product improvements.".into(),
-            url: "https://example.test/orbit/python".into(),
-        },
-        Job {
-            id: "be7209a33c".into(),
-            title: "API Engineer".into(),
-            company: "Luma Health".into(),
-            location: "Italy · Remote".into(),
-            work_mode: WorkMode::Remote,
-            status: ApplicationStatus::New,
-            score: 87,
-            salary: None,
-            source: "Google".into(),
-            verification: "Reachable".into(),
-            posted: "1d ago".into(),
-            skills: vec!["REST".into(), "Python".into(), "Testing".into(), "AWS".into()],
-            concerns: vec!["Salary not published".into()],
-            description: "Build and maintain healthcare APIs, integrations, and background services. The team values clear interfaces, automated tests, code review, and thoughtful incident response.".into(),
-            url: "https://example.test/luma/api".into(),
-        },
-        Job {
-            id: "a9031148cd".into(),
-            title: "Software Engineer I".into(),
-            company: "Canvas Works".into(),
-            location: "Turin · Hybrid".into(),
-            work_mode: WorkMode::Hybrid,
-            status: ApplicationStatus::Applied,
-            score: 86,
-            salary: Some("€42k–€50k".into()),
-            source: "Greenhouse".into(),
-            verification: "Verified".into(),
-            posted: "2d ago".into(),
-            skills: vec!["TypeScript".into(), "Node.js".into(), "PostgreSQL".into()],
-            concerns: vec![],
-            description: "A junior product-engineering role spanning backend services and lightweight frontend work. Engineers collaborate closely with design and customer teams and receive regular mentorship.".into(),
-            url: "https://example.test/canvas/swe1".into(),
-        },
-        Job {
-            id: "88f901c26e".into(),
-            title: "Backend Software Engineer".into(),
-            company: "Keystone".into(),
-            location: "Europe · Remote".into(),
-            work_mode: WorkMode::Remote,
-            status: ApplicationStatus::Interview,
-            score: 84,
-            salary: Some("€55k–€72k".into()),
-            source: "Lever".into(),
-            verification: "Verified".into(),
-            posted: "3d ago".into(),
-            skills: vec!["Rust".into(), "PostgreSQL".into(), "Distributed systems".into()],
-            concerns: vec!["Rust experience preferred".into()],
-            description: "Build backend services for a distributed collaboration platform. The team uses Rust heavily but is open to strong backend engineers from other ecosystems who can demonstrate systems fundamentals.".into(),
-            url: "https://example.test/keystone/backend".into(),
-        },
-        Job {
-            id: "5cd684a12f".into(),
-            title: "Junior Platform Engineer".into(),
-            company: "Vela Systems".into(),
-            location: "Rome · Hybrid".into(),
-            work_mode: WorkMode::Hybrid,
-            status: ApplicationStatus::New,
-            score: 82,
-            salary: Some("€40k–€49k".into()),
-            source: "Recruitee".into(),
-            verification: "Verified".into(),
-            posted: "3d ago".into(),
-            skills: vec!["Linux".into(), "Docker".into(), "Terraform".into(), "Python".into()],
-            concerns: vec![],
-            description: "Support developer tooling, CI, containers, and cloud infrastructure in a platform team that explicitly welcomes early-career engineers. The first months focus on pairing and operational fundamentals.".into(),
-            url: "https://example.test/vela/platform".into(),
-        },
-        Job {
-            id: "19e3acd688".into(),
-            title: "Associate Software Engineer".into(),
-            company: "Mosaic Travel".into(),
-            location: "Italy · Remote".into(),
-            work_mode: WorkMode::Remote,
-            status: ApplicationStatus::Offer,
-            score: 80,
-            salary: Some("€44k–€54k".into()),
-            source: "Ashby".into(),
-            verification: "Verified".into(),
-            posted: "4d ago".into(),
-            skills: vec!["Java".into(), "Spring".into(), "SQL".into(), "AWS".into()],
-            concerns: vec![],
-            description: "Join a travel-tech team working on booking and inventory services. The associate track includes structured onboarding, code review, and gradual ownership of production services.".into(),
-            url: "https://example.test/mosaic/associate".into(),
-        },
-        Job {
-            id: "3e4cb8901d".into(),
-            title: "Backend Engineer".into(),
-            company: "Signal Foundry".into(),
-            location: "Berlin · Remote EU".into(),
-            work_mode: WorkMode::Remote,
-            status: ApplicationStatus::Rejected,
-            score: 78,
-            salary: Some("€58k–€70k".into()),
-            source: "Greenhouse".into(),
-            verification: "Verified".into(),
-            posted: "5d ago".into(),
-            skills: vec!["Go".into(), "PostgreSQL".into(), "Kafka".into()],
-            concerns: vec!["German timezone overlap".into()],
-            description: "Backend role on a real-time event platform. The team values simple service design, observability, and operational ownership.".into(),
-            url: "https://example.test/signal/backend".into(),
-        },
-        Job {
-            id: "f06d5ce822".into(),
-            title: "Entry-Level Developer".into(),
-            company: "Juniper Studio".into(),
-            location: "Florence · On-site".into(),
-            work_mode: WorkMode::Onsite,
-            status: ApplicationStatus::Closed,
-            score: 72,
-            salary: Some("€32k–€38k".into()),
-            source: "Google".into(),
-            verification: "Closed".into(),
-            posted: "8d ago".into(),
-            skills: vec!["JavaScript".into(), "React".into(), "Node.js".into()],
-            concerns: vec!["On-site only".into()],
-            description: "Entry-level generalist role working across web applications and internal tools. This listing is retained for history even though verification shows it is no longer accepting applications.".into(),
-            url: "https://example.test/juniper/developer".into(),
-        },
-        Job {
-            id: "40be507d66".into(),
-            title: "Junior Data Engineer".into(),
-            company: "Blue Atlas".into(),
-            location: "Europe · Remote".into(),
-            work_mode: WorkMode::Remote,
-            status: ApplicationStatus::Stale,
-            score: 76,
-            salary: None,
-            source: "LinkedIn".into(),
-            verification: "Reachable".into(),
-            posted: "21d ago".into(),
-            skills: vec!["Python".into(), "SQL".into(), "dbt".into(), "Airflow".into()],
-            concerns: vec!["Not rediscovered recently".into()],
-            description: "Early-career data engineering role focused on ingestion pipelines, analytics infrastructure, and data quality. The job remains reachable but has not been rediscovered inside the configured freshness window.".into(),
-            url: "https://example.test/atlas/data".into(),
-        },
-        Job {
-            id: "d991fca04a".into(),
-            title: "Software Engineer".into(),
-            company: "Helio Robotics".into(),
-            location: "Bologna · On-site".into(),
-            work_mode: WorkMode::Onsite,
-            status: ApplicationStatus::Reviewed,
-            score: 74,
-            salary: Some("€43k–€55k".into()),
-            source: "Lever".into(),
-            verification: "Verified".into(),
-            posted: "6d ago".into(),
-            skills: vec!["C++".into(), "Python".into(), "Linux".into()],
-            concerns: vec!["Mostly on-site".into()],
-            description: "Develop software for robotics systems with a mix of C++ and Python. The role includes hardware integration, simulation, and close collaboration with controls engineers.".into(),
-            url: "https://example.test/helio/software".into(),
-        },
-        Job {
-            id: "bc1f8239a1".into(),
-            title: "Cloud Support Engineer".into(),
-            company: "Nimbus Grid".into(),
-            location: "Italy · Remote".into(),
-            work_mode: WorkMode::Unknown,
-            status: ApplicationStatus::New,
-            score: 70,
-            salary: Some("€36k–€44k".into()),
-            source: "Google".into(),
-            verification: "Reachable".into(),
-            posted: "7d ago".into(),
-            skills: vec!["Linux".into(), "Networking".into(), "AWS".into(), "Python".into()],
-            concerns: vec!["Work arrangement unclear".into()],
-            description: "Customer-facing technical role troubleshooting cloud infrastructure and automation. Good fit for someone who likes debugging and wants a path into platform engineering.".into(),
-            url: "https://example.test/nimbus/support".into(),
-        },
-    ]
+            source_url: format!("https://example.test/source/{index}"),
+            canonical_url: Some(format!("https://example.test/jobs/{index}")),
+            verification: if *status == ApplicationStatus::Closed {
+                "closed".into()
+            } else {
+                "verified".into()
+            },
+            verification_source: Some("greenhouse".into()),
+            replacement_url: None,
+            replacement_title: None,
+            posted: "2026-08-15T12:00:00+00:00".into(),
+            first_seen: "2026-08-15T12:00:00+00:00".into(),
+            last_seen: "2026-08-15T12:00:00+00:00".into(),
+            status_updated_at: None,
+            status_manually_set: !matches!(status, ApplicationStatus::New | ApplicationStatus::Closed | ApplicationStatus::Stale),
+            reasons: vec!["Strong title match".into(), "Python".into(), "Junior-friendly".into()],
+            concerns: if index % 3 == 0 {
+                vec!["3 years preferred".into()]
+            } else {
+                vec![]
+            },
+            description: "Build production software with a small product team, code review, automated tests, and structured mentorship.".into(),
+            notes: String::new(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -351,17 +312,20 @@ mod tests {
     #[test]
     fn demo_data_covers_every_application_status() {
         let jobs = demo_jobs();
-        for status in ApplicationStatus::ALL {
-            assert!(jobs.iter().any(|job| job.status == status));
-        }
+        assert!(ApplicationStatus::ALL.iter().all(|status| jobs.iter().any(|job| job.status == *status)));
     }
 
     #[test]
     fn job_search_blob_contains_useful_fields() {
-        let job = &demo_jobs()[0];
+        let job = demo_jobs().remove(0);
         let blob = job.search_blob();
-        assert!(blob.contains("junior backend engineer"));
-        assert!(blob.contains("northstar labs"));
-        assert!(blob.contains("fastapi"));
+        assert!(blob.contains("northstar"));
+        assert!(blob.contains("python"));
+    }
+
+    #[test]
+    fn status_parser_matches_python_tracker_values() {
+        assert_eq!("interview".parse::<ApplicationStatus>().unwrap(), ApplicationStatus::Interview);
+        assert!("unknown".parse::<ApplicationStatus>().is_err());
     }
 }
