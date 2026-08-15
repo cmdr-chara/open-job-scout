@@ -38,6 +38,11 @@ receiving your CV, notes, or search history.
   `last_seen_at` with `recheck`.
 - Filter the accumulated queue by status, work mode, source, score, or text and
   sort it by score or recency.
+- Human-readable job details by default, with JSON retained for scripting.
+- A focused `next` workflow for reviewing the best new job without manually
+  copying IDs from the queue.
+- Open canonical or source URLs directly from the CLI and add notes without
+  changing application state.
 - Markdown reports plus portable CSV and JSON exports for local analysis.
 - `stats` summarizes the pipeline, source mix, work modes, salary coverage, and
   highest-ranked new jobs.
@@ -97,7 +102,86 @@ Run the first search:
 
 ```powershell
 jobscout search
-jobscout list --status new
+```
+
+## The everyday review loop
+
+The normal workflow no longer requires bouncing between a table and raw JSON.
+Ask OpenJobScout for the highest-priority new job:
+
+```powershell
+jobscout next
+```
+
+`next` prints a readable summary with score, status, work mode, verification,
+salary, reasons, concerns, notes, links, a description preview, and useful
+follow-up commands.
+
+Open the employer/canonical page:
+
+```powershell
+jobscout open JOB_ID
+```
+
+Open the original job-board result instead when needed:
+
+```powershell
+jobscout open JOB_ID --source
+```
+
+Record a thought without changing the application state:
+
+```powershell
+jobscout note JOB_ID "Check the on-call requirement before applying"
+```
+
+Then update the workflow state when you actually make a decision:
+
+```powershell
+jobscout mark JOB_ID reviewed
+jobscout mark JOB_ID applied --note "Applied on the employer careers page"
+jobscout mark JOB_ID interview --note "Technical interview on Friday"
+```
+
+Continue immediately with:
+
+```powershell
+jobscout next
+```
+
+You can combine selection and browser opening:
+
+```powershell
+jobscout next --work-mode remote --min-score 70 --open
+```
+
+## Inspect a job
+
+`show` is intended for humans by default:
+
+```powershell
+jobscout show JOB_ID
+```
+
+Use the complete description when you want it:
+
+```powershell
+jobscout show JOB_ID --full
+```
+
+For scripts and local tooling, the old structured representation remains
+available explicitly:
+
+```powershell
+jobscout show JOB_ID --json
+```
+
+Short aliases are also available for frequently typed read commands:
+
+```powershell
+jobscout ls
+jobscout view JOB_ID
+jobscout log JOB_ID
 ```
 
 ## Example
@@ -116,25 +200,6 @@ Stored or refreshed: 1
 
 ID          SCORE  STATUS     MODE     ROLE
 425a56c785   69.0  new        remote   Junior Python Backend Engineer - Example Labs
-```
-
-`jobscout show 425a56c785` explains the score instead of hiding it behind a
-match percentage: title terms, requested skills, junior signals, work location,
-and any configured concerns are listed separately.
-
-Inspect one result using the ID shown by `list`:
-
-```powershell
-jobscout show 425a56c785
-```
-
-After reviewing the official employer page, update its state:
-
-```powershell
-jobscout mark 425a56c785 reviewed
-jobscout mark 425a56c785 applied --note "Applied on the employer careers page"
-jobscout mark 425a56c785 interview --note "Technical interview on Friday"
-jobscout history 425a56c785
 ```
 
 Each `search` and `import-csv` command also writes a timestamped Markdown
@@ -259,7 +324,11 @@ jobscout search [--config PATH] [--no-verify]
 jobscout import-csv FILE [--config PATH] [--no-verify]
 jobscout list [--config PATH] [--status STATUS] [--work-mode MODE] [--source SOURCE]
               [--min-score N] [--query TEXT] [--sort score|newest] [--limit N]
-jobscout show ID [--config PATH]
+jobscout next [--config PATH] [--work-mode MODE] [--source SOURCE] [--min-score N]
+              [--query TEXT] [--sort score|newest] [--open] [--full]
+jobscout show ID [--config PATH] [--full] [--json]
+jobscout open ID [--config PATH] [--source]
+jobscout note ID TEXT [--config PATH]
 jobscout mark ID STATUS [--config PATH] [--note TEXT]
 jobscout history ID [--config PATH] [--limit N] [--json]
 jobscout recheck [ID ...] [--config PATH] [--status STATUS] [--work-mode MODE]
@@ -287,9 +356,10 @@ not submit a CV or an application.
 
 Discovery and verification do make network requests to the job boards you
 configure and to public job or ATS URLs in the results. `recheck` performs only
-the latter verification requests. Those services receive the requests they
-normally receive from your network connection; review their terms and privacy
-notices before using them.
+the latter verification requests. `open` launches the chosen URL in your local
+default browser. Those services receive the requests they normally receive from
+your network connection; review their terms and privacy notices before using
+them.
 
 ## Scoring
 
