@@ -52,7 +52,10 @@ fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
             "OpenJobScout",
             Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(format!("  {tracked} tracked"), Style::new().fg(theme::FAINT)),
+        Span::styled(
+            format!("  {tracked} tracked"),
+            Style::new().fg(theme::FAINT),
+        ),
     ]));
     frame.render_widget(brand, chunks[0]);
 
