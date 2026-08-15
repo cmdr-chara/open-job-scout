@@ -1,5 +1,7 @@
 mod app;
 mod config;
+mod diagnostics;
+mod exporting;
 mod model;
 mod storage;
 mod theme;
@@ -10,7 +12,7 @@ use std::{io, path::PathBuf, process::Command as ProcessCommand, time::Duration}
 use anyhow::{Context, Result, bail};
 use app::App;
 use clap::{Parser, Subcommand};
-use config::resolve_database_path;
+use config::{default_config_path, resolve_database_path};
 use crossterm::{
     cursor::Show,
     event::{
@@ -74,6 +76,18 @@ enum Commands {
         #[arg(long, default_value_t = 25)]
         limit: usize,
     },
+    /// Print tracker counts and score summary.
+    Stats,
+    /// Export the tracker in Python-compatible JSON or CSV fields.
+    Export {
+        output: PathBuf,
+        #[arg(long, default_value = "json")]
+        format: String,
+        #[arg(long)]
+        status: Option<ApplicationStatus>,
+    },
+    /// Inspect config/database health without mutating tracker data.
+    Doctor,
     /// Mark automatically-managed jobs stale after N unseen days.
     Stale {
         #[arg(long, default_value_t = 30)]
@@ -84,6 +98,14 @@ enum Commands {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let database = resolve_database_path(cli.database.as_deref(), cli.config.as_deref())?;
+    if matches!(cli.command, Some(Commands::Doctor)) {
+        let config_path = match cli.config {
+            Some(path) => config::expand_path(&path)?,
+            None => default_config_path()?,
+        };
+        return command_doctor(&config_path, &database);
+    }
+
     let storage = Storage::open(database)?;
     match cli.command.unwrap_or(Commands::Ui) {
         Commands::Ui => run_ui(storage),
@@ -104,11 +126,18 @@ fn main() -> Result<()> {
             Ok(())
         }
         Commands::History { id, limit } => command_history(&storage, &id, limit),
+        Commands::Stats => command_stats(&storage),
+        Commands::Export {
+            output,
+            format,
+            status,
+        } => command_export(&storage, &output, &format, status),
         Commands::Stale { days } => {
             let changed = storage.mark_stale_jobs(days)?;
             println!("marked {changed} job(s) stale");
             Ok(())
         }
+        Commands::Doctor => unreachable!("doctor is handled before opening storage"),
     }
 }
 
@@ -178,6 +207,51 @@ fn command_history(storage: &Storage, id: &str, limit: usize) -> Result<()> {
             "{}  {:<12}{}{}",
             event.created_at, event.event_type, transition, note
         );
+    }
+    Ok(())
+}
+
+fn command_stats(storage: &Storage) -> Result<()> {
+    let jobs = storage.load_jobs()?;
+    println!("Tracked: {}", jobs.len());
+    for status in ApplicationStatus::ALL {
+        let count = jobs.iter().filter(|job| job.status == status).count();
+        println!("{:<10} {}", format!("{}:", status.label()), count);
+    }
+    if !jobs.is_empty() {
+        let average = jobs.iter().map(|job| job.score).sum::<f64>() / jobs.len() as f64;
+        let best = jobs.iter().map(|job| job.score).fold(0.0_f64, f64::max);
+        println!("Average score: {average:.1}");
+        println!("Best score:    {best:.1}");
+    }
+    Ok(())
+}
+
+fn command_export(
+    storage: &Storage,
+    output: &std::path::Path,
+    format: &str,
+    status: Option<ApplicationStatus>,
+) -> Result<()> {
+    let jobs = storage
+        .load_jobs()?
+        .into_iter()
+        .filter(|job| status.is_none_or(|status| job.status == status))
+        .collect::<Vec<_>>();
+    exporting::export_jobs(&jobs, output, &format.to_ascii_lowercase())?;
+    println!("exported {} job(s) to {}", jobs.len(), output.display());
+    Ok(())
+}
+
+fn command_doctor(config_path: &std::path::Path, database_path: &std::path::Path) -> Result<()> {
+    let checks = diagnostics::run(config_path, database_path);
+    let mut failed = false;
+    for check in checks {
+        println!("{:<5} {:<22} {}", check.level.to_uppercase(), check.check, check.message);
+        failed |= check.level == "error";
+    }
+    if failed {
+        bail!("one or more diagnostics failed");
     }
     Ok(())
 }
@@ -382,6 +456,23 @@ mod tests {
         ));
         let cli = Cli::try_parse_from(["jobscout", "note", "abc123", "follow up"]).unwrap();
         assert!(matches!(cli.command, Some(Commands::Note { .. })));
+    }
+
+    #[test]
+    fn operational_commands_parse() {
+        let stats = Cli::try_parse_from(["jobscout", "stats"]).unwrap();
+        assert!(matches!(stats.command, Some(Commands::Stats)));
+        let export = Cli::try_parse_from([
+            "jobscout",
+            "export",
+            "jobs.json",
+            "--status",
+            "new",
+        ])
+        .unwrap();
+        assert!(matches!(export.command, Some(Commands::Export { .. })));
+        let doctor = Cli::try_parse_from(["jobscout", "doctor"]).unwrap();
+        assert!(matches!(doctor.command, Some(Commands::Doctor)));
     }
 
     #[test]
