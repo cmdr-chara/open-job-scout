@@ -31,6 +31,7 @@ from .models import job_from_record
 from .presentation import format_job_detail, preferred_job_url
 from .ranking import filter_job, rank_job
 from .reporting import write_markdown
+from .review import run_review_session
 from .tracker import SORT_ORDERS, VALID_WORK_MODES, query_jobs, tracker_summary
 from .verification import verify_jobs
 
@@ -224,6 +225,28 @@ def cmd_next(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_review(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    database, _ = storage_paths(config)
+    rows = query_jobs(
+        database,
+        status="new",
+        work_mode=args.work_mode,
+        source=args.source,
+        min_score=args.min_score,
+        query=args.query,
+        sort=args.sort,
+        limit=args.limit,
+    )
+    if not rows:
+        print("No new jobs matched your review filters.")
+        _tip("run `jobscout search` or relax the review filters")
+        return 0
+    print(f"Starting guided review with {len(rows)} new job(s).")
+    run_review_session(rows, database, open_job=_open_row)
+    return 0
+
+
 def cmd_mark(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     database, _ = storage_paths(config)
@@ -378,6 +401,9 @@ def build_parser() -> argparse.ArgumentParser:
   jobscout mark ID applied --note "Applied on the employer site"
   jobscout next
 
+Or review several jobs in one guided session:
+  jobscout review
+
 Run `jobscout COMMAND --help` for command-specific options.""",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -433,6 +459,36 @@ Run `jobscout COMMAND --help` for command-specific options.""",
             metavar="N",
             help=limit_help,
         )
+
+    def add_review_filters(command_parser: argparse.ArgumentParser, *, limit: int | None) -> None:
+        command_parser.add_argument(
+            "--work-mode",
+            choices=sorted(VALID_WORK_MODES),
+            help="only consider this work arrangement",
+        )
+        command_parser.add_argument(
+            "--source", help="only consider this source, for example linkedin or google"
+        )
+        command_parser.add_argument(
+            "--min-score", type=score_value, metavar="N", help="minimum ranking score (0-100)"
+        )
+        command_parser.add_argument(
+            "--query", help="search title, company, location, description, and notes"
+        )
+        command_parser.add_argument(
+            "--sort",
+            choices=sorted(SORT_ORDERS),
+            default="score",
+            help="order by score or most recently seen (default: score)",
+        )
+        if limit is not None:
+            command_parser.add_argument(
+                "--limit",
+                type=positive_int,
+                default=limit,
+                metavar="N",
+                help=f"maximum jobs in the session (default: {limit})",
+            )
 
     init_parser = subparsers.add_parser(
         "init",
@@ -526,31 +582,21 @@ Run `jobscout COMMAND --help` for command-specific options.""",
         description="Show the highest-priority new job, optionally filtered or opened.",
     )
     add_config_argument(next_parser)
-    next_parser.add_argument(
-        "--work-mode",
-        choices=sorted(VALID_WORK_MODES),
-        help="only consider this work arrangement",
-    )
-    next_parser.add_argument(
-        "--source", help="only consider this source, for example linkedin or google"
-    )
-    next_parser.add_argument(
-        "--min-score", type=score_value, metavar="N", help="minimum ranking score (0-100)"
-    )
-    next_parser.add_argument(
-        "--query", help="search title, company, location, description, and notes"
-    )
-    next_parser.add_argument(
-        "--sort",
-        choices=sorted(SORT_ORDERS),
-        default="score",
-        help="pick by score or most recently seen (default: score)",
-    )
+    add_review_filters(next_parser, limit=None)
     next_parser.add_argument("--open", action="store_true", help="also open the job in a browser")
     next_parser.add_argument(
         "--full", action="store_true", help="show the full description instead of a preview"
     )
     next_parser.set_defaults(handler=cmd_next)
+
+    review_parser = subparsers.add_parser(
+        "review",
+        help="Review several new jobs interactively",
+        description="Work through a filtered batch with simple open/note/status actions.",
+    )
+    add_config_argument(review_parser)
+    add_review_filters(review_parser, limit=20)
+    review_parser.set_defaults(handler=cmd_review)
 
     mark_parser = subparsers.add_parser(
         "mark",
