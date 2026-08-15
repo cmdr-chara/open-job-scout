@@ -39,8 +39,8 @@ receiving your CV, notes, or search history.
 - Filter the accumulated queue by status, work mode, source, score, or text and
   sort it by score or recency.
 - Human-readable job details by default, with JSON retained for scripting.
-- A focused `next` workflow for reviewing the best new job without manually
-  copying IDs from the queue.
+- Focused `next` and guided `review` workflows for working the queue without
+  repeatedly copying IDs between commands.
 - Open canonical or source URLs directly from the CLI and add notes without
   changing application state.
 - Markdown reports plus portable CSV and JSON exports for local analysis.
@@ -154,6 +154,30 @@ You can combine selection and browser opening:
 ```powershell
 jobscout next --work-mode remote --min-score 70 --open
 ```
+
+For a batch of jobs, use the guided review session instead:
+
+```powershell
+jobscout review
+jobscout review --work-mode remote --min-score 60 --limit 10
+```
+
+For each job, `review` accepts simple actions:
+
+```text
+o  open the job in your browser
+n  add a note without changing status
+r  mark reviewed and move on
+a  mark applied and move on
+x  mark rejected and move on
+c  mark closed and move on
+s  skip without changing anything
+q  quit the session
+?  show the action help
+```
+
+The session never changes a job merely because it was displayed. Status changes
+happen only after an explicit status action.
 
 ## Inspect a job
 
@@ -326,6 +350,8 @@ jobscout list [--config PATH] [--status STATUS] [--work-mode MODE] [--source SOU
               [--min-score N] [--query TEXT] [--sort score|newest] [--limit N]
 jobscout next [--config PATH] [--work-mode MODE] [--source SOURCE] [--min-score N]
               [--query TEXT] [--sort score|newest] [--open] [--full]
+jobscout review [--config PATH] [--work-mode MODE] [--source SOURCE] [--min-score N]
+                [--query TEXT] [--sort score|newest] [--limit N]
 jobscout show ID [--config PATH] [--full] [--json]
 jobscout open ID [--config PATH] [--source]
 jobscout note ID TEXT [--config PATH]
