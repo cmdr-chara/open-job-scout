@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Filter tracked jobs by status, work mode, source, minimum score, and free-text query.
+- Sort queue views by score or most recently seen and display work mode in `list` output.
+- Add `jobscout stats` for pipeline, source, work-mode, salary, and top-new summaries.
+- Add filtered CSV and JSON exports for spreadsheets and local analysis.
+- Apply the richer queue filters to manually generated Markdown reports.
+
 ## 0.1.0 - 2026-08-11
 
 First public release.
