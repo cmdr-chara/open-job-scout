@@ -109,6 +109,13 @@ def test_friendly_review_commands_parse() -> None:
     assert next_args.min_score == 70
     assert next_args.open is True
 
+    review = build_parser().parse_args(
+        ["review", "--work-mode", "remote", "--min-score", "60", "--limit", "5"]
+    )
+    assert review.work_mode == "remote"
+    assert review.min_score == 60
+    assert review.limit == 5
+
     alias = build_parser().parse_args(["view", "abc123"])
     assert alias.id == "abc123"
     assert callable(alias.handler)
