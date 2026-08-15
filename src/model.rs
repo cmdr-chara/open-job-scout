@@ -144,6 +144,7 @@ pub struct Job {
     pub title: String,
     pub company: String,
     pub location: String,
+    pub remote: Option<bool>,
     pub work_mode: WorkMode,
     pub employment_type: Option<String>,
     pub status: ApplicationStatus,
@@ -240,71 +241,82 @@ pub fn demo_jobs() -> Vec<Job> {
     ApplicationStatus::ALL
         .iter()
         .enumerate()
-        .map(|(index, status)| Job {
-            id: format!("demo{index:06}"),
-            title: match status {
-                ApplicationStatus::New => "Junior Backend Engineer",
-                ApplicationStatus::Reviewed => "Python Developer",
-                ApplicationStatus::Applied => "Software Engineer I",
-                ApplicationStatus::Interview => "Backend Software Engineer",
-                ApplicationStatus::Rejected => "API Engineer",
-                ApplicationStatus::Offer => "Associate Software Engineer",
-                ApplicationStatus::Closed => "Entry-Level Developer",
-                ApplicationStatus::Stale => "Junior Data Engineer",
-            }
-            .into(),
-            company: [
-                "Northstar Labs",
-                "Orbit Finance",
-                "Canvas Works",
-                "Keystone",
-                "Luma Health",
-                "Mosaic Travel",
-                "Juniper Studio",
-                "Blue Atlas",
-            ][index]
+        .map(|(index, status)| {
+            let remote = index % 2 == 0;
+            Job {
+                id: format!("demo{index:06}"),
+                title: match status {
+                    ApplicationStatus::New => "Junior Backend Engineer",
+                    ApplicationStatus::Reviewed => "Python Developer",
+                    ApplicationStatus::Applied => "Software Engineer I",
+                    ApplicationStatus::Interview => "Backend Software Engineer",
+                    ApplicationStatus::Rejected => "API Engineer",
+                    ApplicationStatus::Offer => "Associate Software Engineer",
+                    ApplicationStatus::Closed => "Entry-Level Developer",
+                    ApplicationStatus::Stale => "Junior Data Engineer",
+                }
                 .into(),
-            location: if index % 2 == 0 {
-                "Italy · Remote".into()
-            } else {
-                "Milan · Hybrid".into()
-            },
-            work_mode: if index % 2 == 0 {
-                WorkMode::Remote
-            } else {
-                WorkMode::Hybrid
-            },
-            employment_type: Some("fulltime".into()),
-            status: *status,
-            score: 94.0 - index as f64 * 3.0,
-            salary_min: Some(42_000.0),
-            salary_max: Some(58_000.0),
-            currency: Some("EUR".into()),
-            salary_source: Some("employer".into()),
-            source: "Greenhouse".into(),
-            source_url: format!("https://example.test/source/{index}"),
-            canonical_url: Some(format!("https://example.test/jobs/{index}")),
-            verification: if *status == ApplicationStatus::Closed {
-                "closed".into()
-            } else {
-                "verified".into()
-            },
-            verification_source: Some("greenhouse".into()),
-            replacement_url: None,
-            replacement_title: None,
-            posted: "2026-08-15T12:00:00+00:00".into(),
-            first_seen: "2026-08-15T12:00:00+00:00".into(),
-            last_seen: "2026-08-15T12:00:00+00:00".into(),
-            status_updated_at: None,
-            status_manually_set: !matches!(status, ApplicationStatus::New | ApplicationStatus::Closed | ApplicationStatus::Stale),
-            reasons: vec!["Strong title match".into(), "Python".into(), "Junior-friendly".into()],
-            concerns: if index % 3 == 0 {
-                vec!["3 years preferred".into()]
-            } else {
-                vec![]
-            },
-            description: "Build production software with a small product team, code review, automated tests, and structured mentorship.".into(),
-            notes: String::new(),
+                company: [
+                    "Northstar Labs",
+                    "Orbit Finance",
+                    "Canvas Works",
+                    "Keystone",
+                    "Luma Health",
+                    "Mosaic Travel",
+                    "Juniper Studio",
+                    "Blue Atlas",
+                ][index]
+                    .into(),
+                location: if remote {
+                    "Italy · Remote".into()
+                } else {
+                    "Milan · Hybrid".into()
+                },
+                remote: Some(remote),
+                work_mode: if remote {
+                    WorkMode::Remote
+                } else {
+                    WorkMode::Hybrid
+                },
+                employment_type: Some("fulltime".into()),
+                status: *status,
+                score: 94.0 - index as f64 * 3.0,
+                salary_min: Some(42_000.0),
+                salary_max: Some(58_000.0),
+                currency: Some("EUR".into()),
+                salary_source: Some("employer".into()),
+                source: "Greenhouse".into(),
+                source_url: format!("https://example.test/source/{index}"),
+                canonical_url: Some(format!("https://example.test/jobs/{index}")),
+                verification: if *status == ApplicationStatus::Closed {
+                    "closed".into()
+                } else {
+                    "verified".into()
+                },
+                verification_source: Some("greenhouse".into()),
+                replacement_url: None,
+                replacement_title: None,
+                posted: "2026-08-15T12:00:00+00:00".into(),
+                first_seen: "2026-08-15T12:00:00+00:00".into(),
+                last_seen: "2026-08-15T12:00:00+00:00".into(),
+                status_updated_at: None,
+                status_manually_set: !matches!(
+                    status,
+                    ApplicationStatus::New | ApplicationStatus::Closed | ApplicationStatus::Stale
+                ),
+                reasons: vec![
+                    "Strong title match".into(),
+                    "Python".into(),
+                    "Junior-friendly".into(),
+                ],
+                concerns: if index % 3 == 0 {
+                    vec!["3 years preferred".into()]
+                } else {
+                    vec![]
+                },
+                description: "Build production software with a small product team, code review, automated tests, and structured mentorship.".into(),
+                notes: String::new(),
+            }
         })
         .collect()
 }
