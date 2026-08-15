@@ -28,12 +28,18 @@ impl Tab {
     }
 
     pub fn previous(self) -> Self {
-        let index = Self::ALL.iter().position(|tab| *tab == self).unwrap_or_default();
+        let index = Self::ALL
+            .iter()
+            .position(|tab| *tab == self)
+            .unwrap_or_default();
         Self::ALL[(index + Self::ALL.len() - 1) % Self::ALL.len()]
     }
 
     pub fn next(self) -> Self {
-        let index = Self::ALL.iter().position(|tab| *tab == self).unwrap_or_default();
+        let index = Self::ALL
+            .iter()
+            .position(|tab| *tab == self)
+            .unwrap_or_default();
         Self::ALL[(index + 1) % Self::ALL.len()]
     }
 }
@@ -84,11 +90,16 @@ impl App {
 
     pub fn selected_job(&self) -> Option<&Job> {
         let indices = self.visible_indices();
-        indices.get(self.selected).and_then(|index| self.jobs.get(*index))
+        indices
+            .get(self.selected)
+            .and_then(|index| self.jobs.get(*index))
     }
 
     pub fn tab_count(&self, tab: Tab) -> usize {
-        self.jobs.iter().filter(|job| Self::job_matches_tab(tab, job)).count()
+        self.jobs
+            .iter()
+            .filter(|job| Self::job_matches_tab(tab, job))
+            .count()
     }
 
     pub fn status_count(&self, status: ApplicationStatus) -> usize {
@@ -182,9 +193,15 @@ impl App {
 
     fn job_matches_tab(tab: Tab, job: &Job) -> bool {
         match tab {
-            Tab::Recommended => matches!(job.status, ApplicationStatus::New | ApplicationStatus::Reviewed),
+            Tab::Recommended => matches!(
+                job.status,
+                ApplicationStatus::New | ApplicationStatus::Reviewed
+            ),
             Tab::Applied => job.status == ApplicationStatus::Applied,
-            Tab::Interviews => matches!(job.status, ApplicationStatus::Interview | ApplicationStatus::Offer),
+            Tab::Interviews => matches!(
+                job.status,
+                ApplicationStatus::Interview | ApplicationStatus::Offer
+            ),
             Tab::Pipeline => true,
         }
     }
@@ -262,7 +279,11 @@ mod tests {
             app.jobs.iter().find(|job| job.id == id).unwrap().status,
             ApplicationStatus::Applied
         );
-        assert!(app.visible_indices().iter().all(|index| app.jobs[*index].id != id));
+        assert!(
+            app.visible_indices()
+                .iter()
+                .all(|index| app.jobs[*index].id != id)
+        );
     }
 
     #[test]
