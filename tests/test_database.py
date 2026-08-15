@@ -7,8 +7,10 @@ from open_job_scout.database import (
     connect,
     find_job,
     get_jobs_by_fingerprints,
+    list_job_events,
     list_jobs,
     mark_job,
+    refresh_jobs,
     save_jobs,
 )
 from open_job_scout.models import Job
@@ -155,6 +157,8 @@ def test_v01_direct_url_row_merges_on_first_refresh(tmp_path: Path) -> None:
     assert rows[0]["source_url"] == refreshed.source_url
     assert rows[0]["status"] == "applied"
     assert rows[0]["notes"] == "Preserve this application"
+    events = list_job_events(database, refreshed.fingerprint[:10])
+    assert any(event["note"] == "Preserve this application" for event in events)
 
 
 def test_same_role_with_different_direct_urls_stays_separate(tmp_path: Path) -> None:
@@ -210,4 +214,83 @@ def test_old_unreviewed_job_becomes_stale(tmp_path: Path) -> None:
             (job.fingerprint,),
         )
     assert mark_stale_jobs(database, stale_after_days=1) == 1
+    assert find_job(database, job.fingerprint[:10])["status"] == "stale"
+    assert list_job_events(database, job.fingerprint[:10])[0]["new_value"] == "stale"
+
+
+def test_history_records_manual_status_and_note(tmp_path: Path) -> None:
+    database = tmp_path / "jobs.sqlite3"
+    job = sample_job()
+    save_jobs([job], database)
+    mark_job(database, job.fingerprint[:10], "reviewed", "Looks promising")
+
+    events = list_job_events(database, job.fingerprint[:10])
+    assert events[0]["event_type"] == "status"
+    assert events[0]["old_value"] == "new"
+    assert events[0]["new_value"] == "reviewed"
+    assert events[0]["note"] == "Looks promising"
+    assert events[-1]["event_type"] == "discovered"
+
+
+def test_schema_v3_backfills_history_snapshot(tmp_path: Path) -> None:
+    database = tmp_path / "jobs.sqlite3"
+    job = sample_job()
+    now = "2026-07-26T12:00:00+00:00"
+    connection = sqlite3.connect(database)
+    connection.executescript(SCHEMA)
+    connection.execute(
+        """
+        INSERT INTO jobs (
+            fingerprint, title, company, source_url, score, first_seen_at, last_seen_at, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (job.fingerprint, job.title, job.company, job.source_url, 72, now, now, "applied"),
+    )
+    connection.execute("PRAGMA user_version = 2")
+    connection.commit()
+    connection.close()
+
+    migrated = connect(database)
+    migrated.close()
+    events = list_job_events(database, job.fingerprint[:10])
+    assert len(events) == 1
+    assert events[0]["event_type"] == "snapshot"
+    assert events[0]["new_value"] == "applied"
+
+
+def test_recheck_refresh_preserves_last_seen_and_manual_status(tmp_path: Path) -> None:
+    database = tmp_path / "jobs.sqlite3"
+    job = sample_job()
+    save_jobs([job], database)
+    mark_job(database, job.fingerprint[:10], "applied")
+    before = find_job(database, job.fingerprint[:10])
+    last_seen = before["last_seen_at"]
+
+    job.verification_status = "closed"
+    job.score = 95
+    job.work_mode = "remote"
+    refresh_jobs([job], database)
+
+    stored = find_job(database, job.fingerprint[:10])
+    assert stored["last_seen_at"] == last_seen
+    assert stored["status"] == "applied"
+    assert stored["verification_status"] == "closed"
+    assert stored["score"] == 95
+
+
+def test_recheck_reopens_auto_closed_but_does_not_revive_stale(tmp_path: Path) -> None:
+    database = tmp_path / "jobs.sqlite3"
+    job = sample_job()
+    job.verification_status = "closed"
+    save_jobs([job], database)
+    job.verification_status = "verified"
+    refresh_jobs([job], database)
+    assert find_job(database, job.fingerprint[:10])["status"] == "new"
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE jobs SET status='stale', status_manually_set=0 WHERE fingerprint=?",
+            (job.fingerprint,),
+        )
+    refresh_jobs([job], database)
     assert find_job(database, job.fingerprint[:10])["status"] == "stale"

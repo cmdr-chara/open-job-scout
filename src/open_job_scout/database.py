@@ -20,7 +20,7 @@ VALID_STATUSES = {
     "closed",
     "stale",
 }
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -56,7 +56,47 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status_score ON jobs(status, score DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_last_seen ON jobs(last_seen_at DESC);
+CREATE TABLE IF NOT EXISTS job_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_fingerprint TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    old_value TEXT,
+    new_value TEXT,
+    note TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(job_fingerprint) REFERENCES jobs(fingerprint)
+        ON UPDATE CASCADE ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_job_events_job_created
+ON job_events(job_fingerprint, created_at DESC, id DESC);
 """
+
+
+def _record_event(
+    connection: sqlite3.Connection,
+    fingerprint: str,
+    event_type: str,
+    *,
+    old_value: str | None = None,
+    new_value: str | None = None,
+    note: str | None = None,
+    created_at: str | None = None,
+) -> None:
+    connection.execute(
+        """
+        INSERT INTO job_events (
+            job_fingerprint, event_type, old_value, new_value, note, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            fingerprint,
+            event_type,
+            old_value,
+            new_value,
+            note,
+            created_at or datetime.now(UTC).isoformat(),
+        ),
+    )
 
 
 def _merge_identity_rows(
@@ -108,6 +148,11 @@ def _merge_identity_rows(
     ]
     if obsolete:
         placeholders = ",".join("?" for _ in obsolete)
+        connection.execute(
+            f"UPDATE job_events SET job_fingerprint=? "
+            f"WHERE job_fingerprint IN ({placeholders})",
+            (stable, *obsolete),
+        )
         connection.execute(
             f"DELETE FROM jobs WHERE fingerprint IN ({placeholders})",
             obsolete,
@@ -182,6 +227,24 @@ def _migrate_schema_v2(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_schema_v3(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        INSERT INTO job_events (job_fingerprint, event_type, new_value, note, created_at)
+        SELECT
+            fingerprint,
+            'snapshot',
+            status,
+            'State recorded during history migration',
+            COALESCE(status_updated_at, first_seen_at)
+        FROM jobs
+        WHERE NOT EXISTS (
+            SELECT 1 FROM job_events WHERE job_events.job_fingerprint=jobs.fingerprint
+        )
+        """
+    )
+
+
 def connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     existed = path.exists()
@@ -206,6 +269,11 @@ def connect(path: Path) -> sqlite3.Connection:
             with connection:
                 _migrate_schema_v2(connection)
                 connection.execute("PRAGMA user_version = 2")
+            version = 2
+        if version < 3:
+            with connection:
+                _migrate_schema_v3(connection)
+                connection.execute("PRAGMA user_version = 3")
         if not existed and os.name != "nt":
             path.chmod(0o600)
     except Exception:
@@ -220,6 +288,9 @@ def save_jobs(jobs: Iterable[Job], path: Path) -> int:
     with closing(connect(path)) as connection, connection:
         for job in jobs:
             _reconcile_legacy_job(connection, job)
+            before = connection.execute(
+                "SELECT * FROM jobs WHERE fingerprint=?", (job.fingerprint,)
+            ).fetchone()
             connection.execute(
                 """
                 INSERT INTO jobs (
@@ -299,6 +370,128 @@ def save_jobs(jobs: Iterable[Job], path: Path) -> int:
                     0,
                 ),
             )
+            after = connection.execute(
+                "SELECT * FROM jobs WHERE fingerprint=?", (job.fingerprint,)
+            ).fetchone()
+            if before is None:
+                _record_event(
+                    connection,
+                    job.fingerprint,
+                    "discovered",
+                    new_value=after["status"],
+                    note=f"source={job.source}; verification={job.verification_status}",
+                    created_at=now,
+                )
+            else:
+                if before["verification_status"] != after["verification_status"]:
+                    _record_event(
+                        connection,
+                        job.fingerprint,
+                        "verification",
+                        old_value=before["verification_status"],
+                        new_value=after["verification_status"],
+                        created_at=now,
+                    )
+                if before["status"] != after["status"]:
+                    _record_event(
+                        connection,
+                        job.fingerprint,
+                        "status",
+                        old_value=before["status"],
+                        new_value=after["status"],
+                        note="automatic discovery refresh",
+                        created_at=now,
+                    )
+            count += 1
+    return count
+
+
+def refresh_jobs(jobs: Iterable[Job], path: Path) -> int:
+    """Update verification/ranking metadata without pretending a job was rediscovered."""
+    now = datetime.now(UTC).isoformat()
+    count = 0
+    with closing(connect(path)) as connection, connection:
+        for job in jobs:
+            before = connection.execute(
+                "SELECT * FROM jobs WHERE fingerprint=?", (job.fingerprint,)
+            ).fetchone()
+            if before is None:
+                raise LookupError(f"Tracked job disappeared during recheck: {job.fingerprint[:10]}")
+
+            next_status = before["status"]
+            if not before["status_manually_set"]:
+                if job.verification_status == "closed":
+                    next_status = "closed"
+                elif before["status"] == "closed":
+                    next_status = "new"
+            status_updated_at = (
+                now if next_status != before["status"] else before["status_updated_at"]
+            )
+            connection.execute(
+                """
+                UPDATE jobs SET
+                    remote=?,
+                    work_mode=?,
+                    salary_min=COALESCE(?, salary_min),
+                    salary_max=COALESCE(?, salary_max),
+                    currency=COALESCE(?, currency),
+                    salary_source=COALESCE(?, salary_source),
+                    description=?,
+                    posted_at=?,
+                    canonical_url=COALESCE(?, canonical_url),
+                    score=?,
+                    reasons=?,
+                    concerns=?,
+                    verification_status=?,
+                    verification_source=?,
+                    replacement_url=?,
+                    replacement_title=?,
+                    status=?,
+                    status_updated_at=?
+                WHERE fingerprint=?
+                """,
+                (
+                    job.remote,
+                    job.work_mode,
+                    job.salary_min,
+                    job.salary_max,
+                    job.currency,
+                    job.salary_source,
+                    job.description,
+                    job.posted_at,
+                    job.canonical_url,
+                    job.score,
+                    json.dumps(job.reasons, ensure_ascii=False),
+                    json.dumps(job.concerns, ensure_ascii=False),
+                    job.verification_status,
+                    job.verification_source,
+                    job.replacement_url,
+                    job.replacement_title,
+                    next_status,
+                    status_updated_at,
+                    job.fingerprint,
+                ),
+            )
+            if before["verification_status"] != job.verification_status:
+                _record_event(
+                    connection,
+                    job.fingerprint,
+                    "verification",
+                    old_value=before["verification_status"],
+                    new_value=job.verification_status,
+                    note="manual recheck",
+                    created_at=now,
+                )
+            if before["status"] != next_status:
+                _record_event(
+                    connection,
+                    job.fingerprint,
+                    "status",
+                    old_value=before["status"],
+                    new_value=next_status,
+                    note="automatic verification recheck",
+                    created_at=now,
+                )
             count += 1
     return count
 
@@ -343,21 +536,53 @@ def find_job(path: Path, identifier: str) -> sqlite3.Row:
     return rows[0]
 
 
+def list_job_events(path: Path, identifier: str, limit: int = 50) -> list[sqlite3.Row]:
+    if limit < 1:
+        raise ValueError("Limit must be at least 1.")
+    row = find_job(path, identifier)
+    with closing(connect(path)) as connection:
+        return connection.execute(
+            """
+            SELECT id, event_type, old_value, new_value, note, created_at
+            FROM job_events
+            WHERE job_fingerprint=?
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            (row["fingerprint"], limit),
+        ).fetchall()
+
+
 def mark_stale_jobs(path: Path, stale_after_days: int = 30) -> int:
     cutoff = (datetime.now(UTC) - timedelta(days=stale_after_days)).isoformat()
     now = datetime.now(UTC).isoformat()
     with closing(connect(path)) as connection, connection:
-        cursor = connection.execute(
+        candidates = connection.execute(
             """
-            UPDATE jobs
-            SET status='stale', status_updated_at=?
+            SELECT fingerprint, status FROM jobs
             WHERE status_manually_set=0
               AND status IN ('new','reviewed')
               AND last_seen_at < ?
             """,
-            (now, cutoff),
+            (cutoff,),
+        ).fetchall()
+        if not candidates:
+            return 0
+        connection.executemany(
+            "UPDATE jobs SET status='stale', status_updated_at=? WHERE fingerprint=?",
+            ((now, row["fingerprint"]) for row in candidates),
         )
-        return cursor.rowcount
+        for row in candidates:
+            _record_event(
+                connection,
+                row["fingerprint"],
+                "status",
+                old_value=row["status"],
+                new_value="stale",
+                note="not seen in configured discovery window",
+                created_at=now,
+            )
+        return len(candidates)
 
 
 def mark_job(path: Path, identifier: str, status: str, note: str | None = None) -> None:
@@ -388,4 +613,22 @@ def mark_job(path: Path, identifier: str, status: str, note: str | None = None) 
                 WHERE fingerprint=?
                 """,
                 (status, now, note, note, note, now, note, row["fingerprint"]),
+            )
+        if row["status"] != status:
+            _record_event(
+                connection,
+                row["fingerprint"],
+                "status",
+                old_value=row["status"],
+                new_value=status,
+                note=note,
+                created_at=now,
+            )
+        elif note:
+            _record_event(
+                connection,
+                row["fingerprint"],
+                "note",
+                note=note,
+                created_at=now,
             )
