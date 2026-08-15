@@ -67,7 +67,7 @@ pub struct App {
     pub should_quit: bool,
     pub notice: Option<String>,
     pub open_url: Option<String>,
-    storage: Option<Storage>,
+    pub(crate) storage: Option<Storage>,
 }
 
 impl Default for App {
