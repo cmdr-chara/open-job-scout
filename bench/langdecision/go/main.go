@@ -9,9 +9,9 @@ import (
     "strings"
     "time"
 
+    tea "charm.land/bubbletea/v2"
+    "charm.land/lipgloss/v2"
     "github.com/PuerkitoBio/goquery"
-    tea "github.com/charmbracelet/bubbletea"
-    "github.com/charmbracelet/lipgloss"
     _ "modernc.org/sqlite"
 )
 
@@ -182,7 +182,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
     return m, nil
 }
 
-func (m model) View() string {
+func (m model) View() tea.View {
     visible := 28
     if visible > len(m.jobs) {
         visible = len(m.jobs)
@@ -208,10 +208,14 @@ func (m model) View() string {
         titleStyle.Render("WHY IT MATCHES") + "\n" +
         "✓ Python\n✓ FastAPI\n✓ PostgreSQL\n✓ Junior-friendly\n\n" +
         mutedStyle.Render("↑↓ Navigate   / Search   O Open   N Note")
-    return lipgloss.JoinHorizontal(lipgloss.Top,
+    content := lipgloss.JoinHorizontal(lipgloss.Top,
         panelStyle.Width(48).Height(34).Render(left.String()),
         panelStyle.Width(68).Height(34).Render(detail),
     )
+    view := tea.NewView(content)
+    view.AltScreen = true
+    view.MouseMode = tea.MouseModeCellMotion
+    return view
 }
 
 func benchTUI(jobs []Job) float64 {
@@ -219,7 +223,8 @@ func benchTUI(jobs []Job) float64 {
     m := model{jobs: sample}
     return bench(1800, func() {
         m.selected = (m.selected + 1) % 28
-        sinkString = m.View()
+        view := m.View()
+        sinkString = view.Content
     })
 }
 
