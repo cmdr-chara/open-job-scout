@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import tomllib
 from collections.abc import Mapping
@@ -144,4 +145,6 @@ def initialize_config(destination: Path | None = None, *, force: bool = False) -
     resource = files("open_job_scout").joinpath("default_config.toml")
     with resource.open("rb") as source, target.open("wb") as output:
         shutil.copyfileobj(source, output)
+    if os.name != "nt":
+        target.chmod(0o600)
     return target
