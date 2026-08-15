@@ -88,6 +88,23 @@ def test_queue_filters_and_export_options_parse() -> None:
     assert stats_args.command == "stats"
 
 
+def test_history_recheck_and_doctor_options_parse() -> None:
+    history = build_parser().parse_args(["history", "abc123", "--json", "--limit", "10"])
+    assert history.id == "abc123"
+    assert history.json is True
+    assert history.limit == 10
+
+    recheck = build_parser().parse_args(
+        ["recheck", "abc123", "def456", "--workers", "3"]
+    )
+    assert recheck.ids == ["abc123", "def456"]
+    assert recheck.workers == 3
+    assert recheck.limit == 50
+
+    doctor = build_parser().parse_args(["doctor", "--json"])
+    assert doctor.json is True
+
+
 def test_min_score_must_be_in_range() -> None:
     with pytest.raises(SystemExit):
         build_parser().parse_args(["list", "--min-score", "101"])
