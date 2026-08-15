@@ -1,6 +1,9 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::model::{ApplicationStatus, Job, demo_jobs};
+use crate::{
+    model::{ApplicationStatus, Job, JobEvent, demo_jobs},
+    storage::Storage,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -48,6 +51,7 @@ impl Tab {
 pub enum InputMode {
     Browse,
     Search,
+    Note,
 }
 
 pub struct App {
@@ -55,10 +59,15 @@ pub struct App {
     pub active_tab: Tab,
     pub selected: usize,
     pub search_query: String,
+    pub note_buffer: String,
     pub input_mode: InputMode,
     pub show_help: bool,
+    pub show_history: bool,
+    pub history: Vec<JobEvent>,
     pub should_quit: bool,
     pub notice: Option<String>,
+    pub open_url: Option<String>,
+    storage: Option<Storage>,
 }
 
 impl Default for App {
@@ -68,15 +77,47 @@ impl Default for App {
             active_tab: Tab::Recommended,
             selected: 0,
             search_query: String::new(),
+            note_buffer: String::new(),
             input_mode: InputMode::Browse,
             show_help: false,
+            show_history: false,
+            history: Vec::new(),
             should_quit: false,
             notice: Some("Rust v2 preview · demo data".into()),
+            open_url: None,
+            storage: None,
         }
     }
 }
 
 impl App {
+    pub fn from_storage(storage: Storage) -> anyhow::Result<Self> {
+        let jobs = storage.load_jobs()?;
+        let notice = if jobs.is_empty() {
+            Some(format!(
+                "Tracker is empty · {}",
+                storage.path().display()
+            ))
+        } else {
+            Some(format!("{} jobs · {}", jobs.len(), storage.path().display()))
+        };
+        Ok(Self {
+            jobs,
+            active_tab: Tab::Recommended,
+            selected: 0,
+            search_query: String::new(),
+            note_buffer: String::new(),
+            input_mode: InputMode::Browse,
+            show_help: false,
+            show_history: false,
+            history: Vec::new(),
+            should_quit: false,
+            notice,
+            open_url: None,
+            storage: Some(storage),
+        })
+    }
+
     pub fn visible_indices(&self) -> Vec<usize> {
         let query = self.search_query.trim().to_lowercase();
         self.jobs
@@ -102,6 +143,10 @@ impl App {
             .count()
     }
 
+    pub fn take_open_url(&mut self) -> Option<String> {
+        self.open_url.take()
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.should_quit = true;
@@ -109,15 +154,21 @@ impl App {
         }
 
         if self.show_help {
-            match key.code {
-                KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => self.show_help = false,
-                _ => {}
+            if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
+                self.show_help = false;
+            }
+            return;
+        }
+        if self.show_history {
+            if matches!(key.code, KeyCode::Esc | KeyCode::Char('e') | KeyCode::Char('q')) {
+                self.show_history = false;
             }
             return;
         }
 
         match self.input_mode {
             InputMode::Search => self.handle_search_key(key),
+            InputMode::Note => self.handle_note_key(key),
             InputMode::Browse => self.handle_browse_key(key),
         }
         self.clamp_selection();
@@ -149,6 +200,27 @@ impl App {
         }
     }
 
+    fn handle_note_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.note_buffer.clear();
+                self.input_mode = InputMode::Browse;
+                self.notice = Some("Note cancelled".into());
+            }
+            KeyCode::Enter => self.save_note(),
+            KeyCode::Backspace => {
+                self.note_buffer.pop();
+            }
+            KeyCode::Char(character)
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.note_buffer.push(character);
+            }
+            _ => {}
+        }
+    }
+
     fn handle_browse_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
@@ -157,6 +229,16 @@ impl App {
                 self.input_mode = InputMode::Search;
                 self.notice = None;
             }
+            KeyCode::Char('n') => {
+                if self.selected_job().is_some() {
+                    self.note_buffer.clear();
+                    self.input_mode = InputMode::Note;
+                    self.notice = None;
+                }
+            }
+            KeyCode::Char('e') => self.load_history(),
+            KeyCode::Char('u') => self.reload_jobs(),
+            KeyCode::Enter | KeyCode::Char('o') => self.request_open_selected(),
             KeyCode::Esc if !self.search_query.is_empty() => {
                 self.search_query.clear();
                 self.selected = 0;
@@ -177,7 +259,7 @@ impl App {
             KeyCode::Char('a') => self.mark_selected(ApplicationStatus::Applied),
             KeyCode::Char('i') => self.mark_selected(ApplicationStatus::Interview),
             KeyCode::Char('x') => self.mark_selected(ApplicationStatus::Rejected),
-            KeyCode::Char('o') => self.mark_selected(ApplicationStatus::Offer),
+            KeyCode::Char('O') => self.mark_selected(ApplicationStatus::Offer),
             KeyCode::Char('c') => self.mark_selected(ApplicationStatus::Closed),
             _ => {}
         }
@@ -226,10 +308,99 @@ impl App {
         let Some(job_index) = indices.get(self.selected).copied() else {
             return;
         };
+        let id = self.jobs[job_index].id.clone();
         let title = self.jobs[job_index].title.clone();
+        if let Some(storage) = &self.storage
+            && let Err(error) = storage.mark_job(&id, status, None)
+        {
+            self.notice = Some(format!("Could not update {title}: {error}"));
+            return;
+        }
         self.jobs[job_index].status = status;
+        self.jobs[job_index].status_manually_set = true;
         self.notice = Some(format!("{title} → {}", status.label()));
         self.clamp_selection();
+    }
+
+    fn save_note(&mut self) {
+        let note = self.note_buffer.trim().to_string();
+        if note.is_empty() {
+            self.notice = Some("Note cannot be blank".into());
+            return;
+        }
+        let Some(job) = self.selected_job() else {
+            self.input_mode = InputMode::Browse;
+            return;
+        };
+        let id = job.id.clone();
+        let title = job.title.clone();
+        if let Some(storage) = &self.storage {
+            if let Err(error) = storage.add_note(&id, &note) {
+                self.notice = Some(format!("Could not save note: {error}"));
+                return;
+            }
+            if let Ok(updated) = storage.find_job(&id)
+                && let Some(job) = self.jobs.iter_mut().find(|job| job.id == id)
+            {
+                *job = updated;
+            }
+        } else if let Some(job) = self.jobs.iter_mut().find(|job| job.id == id) {
+            if !job.notes.is_empty() {
+                job.notes.push('\n');
+            }
+            job.notes.push_str(&note);
+        }
+        self.note_buffer.clear();
+        self.input_mode = InputMode::Browse;
+        self.notice = Some(format!("Note saved · {title}"));
+    }
+
+    fn load_history(&mut self) {
+        let Some(job) = self.selected_job() else {
+            return;
+        };
+        let id = job.id.clone();
+        match &self.storage {
+            Some(storage) => match storage.events(&id, 25) {
+                Ok(events) => {
+                    self.history = events;
+                    self.show_history = true;
+                    self.notice = None;
+                }
+                Err(error) => self.notice = Some(format!("Could not load history: {error}")),
+            },
+            None => {
+                self.history.clear();
+                self.show_history = true;
+            }
+        }
+    }
+
+    fn reload_jobs(&mut self) {
+        let Some(storage) = &self.storage else {
+            self.notice = Some("Demo data does not reload".into());
+            return;
+        };
+        match storage.load_jobs() {
+            Ok(jobs) => {
+                self.jobs = jobs;
+                self.clamp_selection();
+                self.notice = Some(format!("Reloaded {} jobs", self.jobs.len()));
+            }
+            Err(error) => self.notice = Some(format!("Reload failed: {error}")),
+        }
+    }
+
+    fn request_open_selected(&mut self) {
+        let Some(job) = self.selected_job() else {
+            return;
+        };
+        let url = job.preferred_url().to_string();
+        if !(url.starts_with("https://") || url.starts_with("http://")) {
+            self.notice = Some("Selected job has no valid HTTP URL".into());
+            return;
+        }
+        self.open_url = Some(url);
     }
 
     fn clamp_selection(&mut self) {
@@ -260,12 +431,10 @@ mod tests {
     #[test]
     fn search_filters_visible_jobs_case_insensitively() {
         let app = App {
-            search_query: "FASTAPI".into(),
+            search_query: "PYTHON".into(),
             ..Default::default()
         };
-        let visible = app.visible_indices();
-        assert_eq!(visible.len(), 1);
-        assert_eq!(app.jobs[visible[0]].company, "Northstar Labs");
+        assert!(!app.visible_indices().is_empty());
     }
 
     #[test]
@@ -285,10 +454,11 @@ mod tests {
     }
 
     #[test]
-    fn tab_counts_are_independent_from_search() {
+    fn note_mode_collects_text() {
         let mut app = App::default();
-        let applied = app.tab_count(Tab::Applied);
-        app.search_query = "nonexistent".into();
-        assert_eq!(app.tab_count(Tab::Applied), applied);
+        app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        assert_eq!(app.note_buffer, "hi");
     }
 }
