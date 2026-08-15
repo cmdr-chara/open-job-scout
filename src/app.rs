@@ -102,10 +102,6 @@ impl App {
             .count()
     }
 
-    pub fn status_count(&self, status: ApplicationStatus) -> usize {
-        self.jobs.iter().filter(|job| job.status == status).count()
-    }
-
     pub fn handle_key(&mut self, key: KeyEvent) {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             self.should_quit = true;
@@ -263,8 +259,10 @@ mod tests {
 
     #[test]
     fn search_filters_visible_jobs_case_insensitively() {
-        let mut app = App::default();
-        app.search_query = "FASTAPI".into();
+        let app = App {
+            search_query: "FASTAPI".into(),
+            ..Default::default()
+        };
         let visible = app.visible_indices();
         assert_eq!(visible.len(), 1);
         assert_eq!(app.jobs[visible[0]].company, "Northstar Labs");
