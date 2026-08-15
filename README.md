@@ -32,11 +32,17 @@ receiving your CV, notes, or search history.
 - Unreviewed records not seen for the configured interval become `stale`.
 - Application states: `new`, `reviewed`, `applied`, `interview`, `rejected`,
   `offer`, `closed`, and `stale`. Manual states survive crawler refreshes.
+- Durable per-job history records discovery, verification changes, automatic
+  transitions, manual status changes, and notes.
+- Re-verify existing jobs without re-running discovery or changing
+  `last_seen_at` with `recheck`.
 - Filter the accumulated queue by status, work mode, source, score, or text and
   sort it by score or recency.
 - Markdown reports plus portable CSV and JSON exports for local analysis.
 - `stats` summarizes the pipeline, source mix, work modes, salary coverage, and
   highest-ranked new jobs.
+- `doctor` checks local configuration, SQLite integrity/schema, filesystem
+  permissions, writable report storage, source safety, and JobSpy availability.
 - No automatic applications.
 
 ## Demo
@@ -62,7 +68,9 @@ jobscout init
 ```
 
 The commands work in PowerShell, macOS, and Linux shells. OpenJobScout stores
-its configuration and data under `~/.openjobscout/` by default.
+its configuration and data under `~/.openjobscout/` by default. On Unix-like
+systems newly initialized config and database files are restricted to the
+current user.
 
 The `init` command creates:
 
@@ -126,6 +134,7 @@ After reviewing the official employer page, update its state:
 jobscout mark 425a56c785 reviewed
 jobscout mark 425a56c785 applied --note "Applied on the employer careers page"
 jobscout mark 425a56c785 interview --note "Technical interview on Friday"
+jobscout history 425a56c785
 ```
 
 Each `search` and `import-csv` command also writes a timestamped Markdown
@@ -166,6 +175,57 @@ Exports are written to the configured report directory unless `--output` is
 provided. `export` includes all matching jobs by default; pass `--limit N` when
 you only want the first N rows.
 
+## Recheck and audit existing jobs
+
+`search` means the listing was found again by a configured source, so it updates
+the discovery timestamp. `recheck` has different semantics: it revisits the
+stored public job/ATS URL, refreshes verification metadata and the local score,
+and deliberately leaves `last_seen_at` unchanged.
+
+Recheck specific jobs:
+
+```powershell
+jobscout recheck 425a56c785 76be194aa1
+```
+
+Or recheck a filtered slice of the tracker. The default limit is 50 to avoid an
+accidental burst of network requests:
+
+```powershell
+jobscout recheck --status new --work-mode remote --min-score 60
+jobscout recheck --status closed --limit 20
+```
+
+Automatic `closed` jobs can return to `new` if a recheck proves the listing is
+active again. A manual application state such as `applied` or `interview` is not
+overwritten. A `stale` job also stays stale until discovery sees it again.
+
+The schema-v3 history table records these transitions separately from the
+legacy notes field:
+
+```powershell
+jobscout history 425a56c785
+jobscout history 425a56c785 --json
+```
+
+Existing databases migrate automatically. They receive one `snapshot` history
+event so the audit trail has a clear starting state; subsequent changes are
+recorded as individual events.
+
+## Diagnose the local installation
+
+Run a local health check before troubleshooting discovery or database problems:
+
+```powershell
+jobscout doctor
+jobscout doctor --json
+```
+
+`doctor` validates the configuration, reports disabled/unsafe source choices,
+checks the SQLite schema and `PRAGMA quick_check`, warns about permissive Unix
+config/database file modes, checks report-directory writability, and confirms
+that JobSpy is importable. It does not perform a live job-board search.
+
 JobSpy is installed as the default discovery engine. The tracker and CSV
 importer remain usable when a particular job board is unavailable.
 The Indeed adapter is temporarily disabled because its current upstream
@@ -201,6 +261,10 @@ jobscout list [--config PATH] [--status STATUS] [--work-mode MODE] [--source SOU
               [--min-score N] [--query TEXT] [--sort score|newest] [--limit N]
 jobscout show ID [--config PATH]
 jobscout mark ID STATUS [--config PATH] [--note TEXT]
+jobscout history ID [--config PATH] [--limit N] [--json]
+jobscout recheck [ID ...] [--config PATH] [--status STATUS] [--work-mode MODE]
+                 [--source SOURCE] [--min-score N] [--query TEXT]
+                 [--sort score|newest] [--limit N] [--workers N]
 jobscout report [--config PATH] [--status STATUS] [--work-mode MODE] [--source SOURCE]
                 [--min-score N] [--query TEXT] [--sort score|newest] [--limit N]
                 [--output PATH]
@@ -208,6 +272,7 @@ jobscout stats [--config PATH]
 jobscout export [--config PATH] [--status STATUS] [--work-mode MODE] [--source SOURCE]
                 [--min-score N] [--query TEXT] [--sort score|newest] [--limit N]
                 [--format csv|json] [--output PATH]
+jobscout doctor [--config PATH] [--json]
 ```
 
 By default, personal state is written beneath `~/.openjobscout/`. The repository
@@ -215,15 +280,16 @@ does not need to contain a CV, database, generated report, or private config.
 
 ## Privacy and network use
 
-Your configuration, SQLite database, reports, notes, and any imported CSV stay
-on your machine. Put imported files in `data/` if you keep them beside the
-repository: that directory is ignored by Git. OpenJobScout does not submit a CV
-or an application.
+Your configuration, SQLite database, reports, notes, event history, and any
+imported CSV stay on your machine. Put imported files in `data/` if you keep
+them beside the repository: that directory is ignored by Git. OpenJobScout does
+not submit a CV or an application.
 
 Discovery and verification do make network requests to the job boards you
-configure and to public job or ATS URLs in the results. Those services receive
-the requests they normally receive from your network connection; review their
-terms and privacy notices before using them.
+configure and to public job or ATS URLs in the results. `recheck` performs only
+the latter verification requests. Those services receive the requests they
+normally receive from your network connection; review their terms and privacy
+notices before using them.
 
 ## Scoring
 
