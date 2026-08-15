@@ -44,7 +44,10 @@ fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
     let brand = Paragraph::new(Line::from(vec![
         Span::styled("◆ ", Style::new().fg(theme::ACCENT)),
-        Span::styled("OpenJobScout", Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "OpenJobScout",
+            Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD),
+        ),
     ]));
     frame.render_widget(brand, chunks[0]);
 
@@ -92,7 +95,11 @@ fn render_job_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let title = if app.search_query.is_empty() {
         format!(" {} ", app.active_tab.label().to_uppercase())
     } else {
-        format!(" {} · /{} ", app.active_tab.label().to_uppercase(), app.search_query)
+        format!(
+            " {} · /{} ",
+            app.active_tab.label().to_uppercase(),
+            app.search_query
+        )
     };
     let block = panel(title, true);
 
@@ -144,7 +151,10 @@ fn job_list_item(job: &Job) -> ListItem<'_> {
             Style::new().fg(score_color).add_modifier(Modifier::BOLD),
         ),
         Span::raw("  "),
-        Span::styled(job.title.clone(), Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            job.title.clone(),
+            Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD),
+        ),
     ]);
     let second = Line::from(vec![
         Span::raw("     "),
@@ -188,7 +198,10 @@ fn render_job_detail(frame: &mut Frame<'_>, job: Option<&Job>, area: Rect) {
             job.title.clone(),
             Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD),
         )),
-        Line::from(Span::styled(job.company.clone(), Style::new().fg(theme::ACCENT))),
+        Line::from(Span::styled(
+            job.company.clone(),
+            Style::new().fg(theme::ACCENT),
+        )),
         Line::from(""),
         Line::from(vec![
             Span::styled(format!("{}  ", job.location), Style::new().fg(theme::MUTED)),
@@ -201,7 +214,10 @@ fn render_job_detail(frame: &mut Frame<'_>, job: Option<&Job>, area: Rect) {
     let gauge = Gauge::default()
         .block(Block::default().title(Span::styled(" MATCH ", theme::accent())))
         .gauge_style(Style::new().fg(theme::ACCENT).bg(theme::SURFACE_ALT))
-        .label(Span::styled(format!("{} · excellent fit", job.score), theme::heading()))
+        .label(Span::styled(
+            format!("{} · excellent fit", job.score),
+            theme::heading(),
+        ))
         .ratio(f64::from(job.score) / 100.0);
     frame.render_widget(gauge, rows[1]);
 
@@ -279,7 +295,10 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
     ]));
     frame.render_widget(shortcuts, chunks[0]);
 
-    let message = app.notice.as_deref().unwrap_or("Local-first · no account required");
+    let message = app
+        .notice
+        .as_deref()
+        .unwrap_or("Local-first · no account required");
     let notice = Paragraph::new(message)
         .style(Style::new().fg(theme::FAINT))
         .alignment(Alignment::Right);
@@ -297,16 +316,26 @@ fn render_search(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let text = if app.search_query.is_empty() {
-        Line::from(Span::styled("Type a title, company, skill…", theme::muted()))
+        Line::from(Span::styled(
+            "Type a title, company, skill…",
+            theme::muted(),
+        ))
     } else {
         Line::from(vec![
             Span::styled("/ ", Style::new().fg(theme::ACCENT)),
-            Span::styled(app.search_query.clone(), Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                app.search_query.clone(),
+                Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD),
+            ),
             Span::styled("▌", Style::new().fg(theme::ACCENT)),
         ])
     };
     let search = Paragraph::new(text)
-        .block(Block::default().borders(Borders::BOTTOM).border_style(Style::new().fg(theme::BORDER)))
+        .block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_style(Style::new().fg(theme::BORDER)),
+        )
         .style(theme::surface());
     frame.render_widget(search, inner);
 }
@@ -320,22 +349,61 @@ fn render_help(frame: &mut Frame<'_>, area: Rect) {
         .style(Style::new().bg(theme::SURFACE))
         .title(Span::styled(" SHORTCUTS ", theme::accent()));
     let help = Paragraph::new(Text::from(vec![
-        Line::from(vec![keycap("↑ / K"), Span::styled("  Previous job", theme::muted())]),
-        Line::from(vec![keycap("↓ / J"), Span::styled("  Next job", theme::muted())]),
-        Line::from(vec![keycap("← / H"), Span::styled("  Previous tab", theme::muted())]),
-        Line::from(vec![keycap("→ / L"), Span::styled("  Next tab", theme::muted())]),
+        Line::from(vec![
+            keycap("↑ / K"),
+            Span::styled("  Previous job", theme::muted()),
+        ]),
+        Line::from(vec![
+            keycap("↓ / J"),
+            Span::styled("  Next job", theme::muted()),
+        ]),
+        Line::from(vec![
+            keycap("← / H"),
+            Span::styled("  Previous tab", theme::muted()),
+        ]),
+        Line::from(vec![
+            keycap("→ / L"),
+            Span::styled("  Next tab", theme::muted()),
+        ]),
         Line::from(""),
-        Line::from(vec![keycap("/"), Span::styled("      Search instantly", theme::muted())]),
-        Line::from(vec![keycap("Esc"), Span::styled("    Clear search", theme::muted())]),
+        Line::from(vec![
+            keycap("/"),
+            Span::styled("      Search instantly", theme::muted()),
+        ]),
+        Line::from(vec![
+            keycap("Esc"),
+            Span::styled("    Clear search", theme::muted()),
+        ]),
         Line::from(""),
-        Line::from(vec![keycap("R"), Span::styled("      Mark reviewed", theme::muted())]),
-        Line::from(vec![keycap("A"), Span::styled("      Mark applied", theme::muted())]),
-        Line::from(vec![keycap("I"), Span::styled("      Mark interview", theme::muted())]),
-        Line::from(vec![keycap("X"), Span::styled("      Mark rejected", theme::muted())]),
-        Line::from(vec![keycap("O"), Span::styled("      Mark offer", theme::muted())]),
-        Line::from(vec![keycap("C"), Span::styled("      Mark closed", theme::muted())]),
+        Line::from(vec![
+            keycap("R"),
+            Span::styled("      Mark reviewed", theme::muted()),
+        ]),
+        Line::from(vec![
+            keycap("A"),
+            Span::styled("      Mark applied", theme::muted()),
+        ]),
+        Line::from(vec![
+            keycap("I"),
+            Span::styled("      Mark interview", theme::muted()),
+        ]),
+        Line::from(vec![
+            keycap("X"),
+            Span::styled("      Mark rejected", theme::muted()),
+        ]),
+        Line::from(vec![
+            keycap("O"),
+            Span::styled("      Mark offer", theme::muted()),
+        ]),
+        Line::from(vec![
+            keycap("C"),
+            Span::styled("      Mark closed", theme::muted()),
+        ]),
         Line::from(""),
-        Line::from(Span::styled("Press ? or Esc to close", Style::new().fg(theme::FAINT))),
+        Line::from(Span::styled(
+            "Press ? or Esc to close",
+            Style::new().fg(theme::FAINT),
+        )),
     ]))
     .block(block)
     .style(theme::surface())
@@ -347,9 +415,20 @@ fn panel(title: String, active: bool) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(if active { theme::BORDER_ACTIVE } else { theme::BORDER }))
+        .border_style(Style::new().fg(if active {
+            theme::BORDER_ACTIVE
+        } else {
+            theme::BORDER
+        }))
         .style(theme::surface())
-        .title(Span::styled(title, if active { theme::accent() } else { theme::muted() }))
+        .title(Span::styled(
+            title,
+            if active {
+                theme::accent()
+            } else {
+                theme::muted()
+            },
+        ))
 }
 
 fn status_badge(status: ApplicationStatus) -> Span<'static> {
