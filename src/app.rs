@@ -94,12 +94,13 @@ impl App {
     pub fn from_storage(storage: Storage) -> anyhow::Result<Self> {
         let jobs = storage.load_jobs()?;
         let notice = if jobs.is_empty() {
+            Some(format!("Tracker is empty · {}", storage.path().display()))
+        } else {
             Some(format!(
-                "Tracker is empty · {}",
+                "{} jobs · {}",
+                jobs.len(),
                 storage.path().display()
             ))
-        } else {
-            Some(format!("{} jobs · {}", jobs.len(), storage.path().display()))
         };
         Ok(Self {
             jobs,
@@ -154,13 +155,19 @@ impl App {
         }
 
         if self.show_help {
-            if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')) {
+            if matches!(
+                key.code,
+                KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q')
+            ) {
                 self.show_help = false;
             }
             return;
         }
         if self.show_history {
-            if matches!(key.code, KeyCode::Esc | KeyCode::Char('e') | KeyCode::Char('q')) {
+            if matches!(
+                key.code,
+                KeyCode::Esc | KeyCode::Char('e') | KeyCode::Char('q')
+            ) {
                 self.show_history = false;
             }
             return;
