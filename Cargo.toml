@@ -1,0 +1,23 @@
+[package]
+name = "openjobscout"
+version = "0.2.0-alpha.1"
+edition = "2024"
+description = "Fast, local-first job discovery and application tracking"
+license = "MIT"
+repository = "https://github.com/cmdr-chara/open-job-scout"
+
+[[bin]]
+name = "jobscout"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.29"
+ratatui = { version = "0.30.2", features = ["crossterm"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
