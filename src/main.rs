@@ -15,9 +15,7 @@ use crossterm::{
         KeyModifiers, MouseEventKind,
     },
     execute,
-    terminal::{
-        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-    },
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 
@@ -93,14 +91,12 @@ fn run_event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resu
                 app.handle_key(key);
             }
             Event::Mouse(mouse) => match mouse.kind {
-                MouseEventKind::ScrollDown => app.handle_key(KeyEvent::new(
-                    KeyCode::Down,
-                    KeyModifiers::NONE,
-                )),
-                MouseEventKind::ScrollUp => app.handle_key(KeyEvent::new(
-                    KeyCode::Up,
-                    KeyModifiers::NONE,
-                )),
+                MouseEventKind::ScrollDown => {
+                    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+                }
+                MouseEventKind::ScrollUp => {
+                    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+                }
                 _ => {}
             },
             Event::Resize(_, _) => {}
