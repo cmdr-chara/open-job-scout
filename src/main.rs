@@ -1,13 +1,21 @@
 mod app;
+mod config;
 mod model;
+mod storage;
 mod theme;
 mod ui;
 
-use std::{io, time::Duration};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    process::Command as ProcessCommand,
+    time::Duration,
+};
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use app::App;
 use clap::{Parser, Subcommand};
+use config::resolve_database_path;
 use crossterm::{
     cursor::Show,
     event::{
@@ -17,7 +25,9 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use model::{ApplicationStatus, Job};
 use ratatui::{Terminal, backend::CrosstermBackend};
+use storage::Storage;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -27,28 +37,216 @@ use ratatui::{Terminal, backend::CrosstermBackend};
     long_about = None
 )]
 struct Cli {
+    /// Override the SQLite tracker path.
+    #[arg(long, global = true)]
+    database: Option<PathBuf>,
+
+    /// Read storage settings from a specific config.toml.
+    #[arg(long, global = true)]
+    config: Option<PathBuf>,
+
     #[command(subcommand)]
-    command: Option<Command>,
+    command: Option<Commands>,
 }
 
 #[derive(Debug, Subcommand)]
-enum Command {
+enum Commands {
     /// Open the interactive terminal application.
     Ui,
+    /// List tracked jobs for scripts and quick terminal checks.
+    List {
+        #[arg(long)]
+        status: Option<ApplicationStatus>,
+        #[arg(short, long)]
+        query: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Show one tracked job by a unique fingerprint prefix.
+    Show { id: String },
+    /// Mark a job with a tracker status.
+    Mark {
+        id: String,
+        status: ApplicationStatus,
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Append a note without changing status ownership.
+    Note { id: String, text: String },
+    /// Show durable tracker history for one job.
+    History {
+        id: String,
+        #[arg(long, default_value_t = 25)]
+        limit: usize,
+    },
+    /// Mark automatically-managed jobs stale after N unseen days.
+    Stale {
+        #[arg(long, default_value_t = 30)]
+        days: i64,
+    },
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    match cli.command.unwrap_or(Command::Ui) {
-        Command::Ui => run_ui(),
+    let database = resolve_database_path(cli.database.as_deref(), cli.config.as_deref())?;
+    let storage = Storage::open(database)?;
+    match cli.command.unwrap_or(Commands::Ui) {
+        Commands::Ui => run_ui(storage),
+        Commands::List {
+            status,
+            query,
+            limit,
+        } => command_list(&storage, status, query.as_deref(), limit),
+        Commands::Show { id } => command_show(&storage, &id),
+        Commands::Mark { id, status, note } => {
+            storage.mark_job(&id, status, note.as_deref())?;
+            println!("{} → {}", id, status.label());
+            Ok(())
+        }
+        Commands::Note { id, text } => {
+            storage.add_note(&id, &text)?;
+            println!("note saved for {id}");
+            Ok(())
+        }
+        Commands::History { id, limit } => command_history(&storage, &id, limit),
+        Commands::Stale { days } => {
+            let changed = storage.mark_stale_jobs(days)?;
+            println!("marked {changed} job(s) stale");
+            Ok(())
+        }
     }
 }
 
-fn run_ui() -> Result<()> {
-    let mut terminal = setup_terminal()?;
-    let result = run_event_loop(&mut terminal);
-    let cleanup = restore_terminal(&mut terminal);
+fn command_list(
+    storage: &Storage,
+    status: Option<ApplicationStatus>,
+    query: Option<&str>,
+    limit: usize,
+) -> Result<()> {
+    if limit == 0 {
+        bail!("limit must be at least 1");
+    }
+    let query = query.map(str::trim).filter(|value| !value.is_empty());
+    let jobs = storage
+        .load_jobs()?
+        .into_iter()
+        .filter(|job| status.is_none_or(|status| job.status == status))
+        .filter(|job| {
+            query.is_none_or(|query| job.search_blob().contains(&query.to_ascii_lowercase()))
+        })
+        .take(limit)
+        .collect::<Vec<_>>();
+    if jobs.is_empty() {
+        println!("No jobs match the current filters.");
+        return Ok(());
+    }
+    for job in jobs {
+        println!(
+            "{:<10} {:>5.1}  {:<10}  {} — {}",
+            job.short_id(),
+            job.score,
+            job.status.as_str(),
+            job.title,
+            job.company
+        );
+    }
+    Ok(())
+}
 
+fn command_show(storage: &Storage, id: &str) -> Result<()> {
+    let job = storage.find_job(id)?;
+    print_job(&job);
+    Ok(())
+}
+
+fn command_history(storage: &Storage, id: &str, limit: usize) -> Result<()> {
+    let job = storage.find_job(id)?;
+    println!("{} — {} ({})", job.title, job.company, job.short_id());
+    let events = storage.events(id, limit)?;
+    if events.is_empty() {
+        println!("No history events recorded.");
+        return Ok(());
+    }
+    for event in events {
+        let transition = match (event.old_value.as_deref(), event.new_value.as_deref()) {
+            (Some(old), Some(new)) => format!(" {old} → {new}"),
+            (_, Some(new)) => format!(" {new}"),
+            _ => String::new(),
+        };
+        let note = event
+            .note
+            .as_deref()
+            .filter(|note| !note.is_empty())
+            .map(|note| format!(" · {note}"))
+            .unwrap_or_default();
+        println!(
+            "{}  {:<12}{}{}",
+            event.created_at, event.event_type, transition, note
+        );
+    }
+    Ok(())
+}
+
+fn print_job(job: &Job) {
+    println!("{} — {}", job.title, job.company);
+    println!("ID:           {}", job.short_id());
+    println!("Score:        {:.1}/100", job.score);
+    println!("Status:       {}", job.status.as_str());
+    println!("Work mode:    {}", job.work_mode.as_str());
+    println!("Verification: {}", job.verification);
+    println!("Location:     {}", fallback(&job.location));
+    println!(
+        "Employment:   {}",
+        job.employment_type.as_deref().unwrap_or("not provided")
+    );
+    println!("Salary:       {}", job.salary_label());
+    println!("Posted:       {}", fallback(&job.posted));
+    println!("Source:       {}", fallback(&job.source));
+    println!("Last seen:    {}", fallback(&job.last_seen));
+    println!("URL:          {}", fallback(job.preferred_url()));
+    println!();
+    println!("Why it ranked:");
+    if job.reasons.is_empty() {
+        println!("  none recorded");
+    } else {
+        for reason in &job.reasons {
+            println!("  + {reason}");
+        }
+    }
+    println!();
+    println!("Concerns:");
+    if job.concerns.is_empty() {
+        println!("  none recorded");
+    } else {
+        for concern in &job.concerns {
+            println!("  - {concern}");
+        }
+    }
+    if !job.notes.trim().is_empty() {
+        println!();
+        println!("Notes:");
+        for line in job.notes.lines() {
+            println!("  {line}");
+        }
+    }
+    println!();
+    println!("Description:");
+    println!("{}", fallback(&job.description));
+}
+
+fn fallback(value: &str) -> &str {
+    if value.trim().is_empty() {
+        "not provided"
+    } else {
+        value
+    }
+}
+
+fn run_ui(storage: Storage) -> Result<()> {
+    let app = App::from_storage(storage)?;
+    let mut terminal = setup_terminal()?;
+    let result = run_event_loop(&mut terminal, app);
+    let cleanup = restore_terminal(&mut terminal);
     result?;
     cleanup?;
     Ok(())
@@ -76,19 +274,24 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
     Ok(())
 }
 
-fn run_event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
-    let mut app = App::default();
-
+fn run_event_loop(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    mut app: App,
+) -> Result<()> {
     while !app.should_quit {
         terminal.draw(|frame| ui::render(frame, &app))?;
-
         if !event::poll(Duration::from_millis(250))? {
             continue;
         }
-
         match event::read()? {
             Event::Key(key) if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) => {
                 app.handle_key(key);
+                if let Some(url) = app.take_open_url() {
+                    match open_in_browser(&url) {
+                        Ok(()) => app.notice = Some("Opened employer listing".into()),
+                        Err(error) => app.notice = Some(format!("Could not open listing: {error}")),
+                    }
+                }
             }
             Event::Mouse(mouse) => match mouse.kind {
                 MouseEventKind::ScrollDown => {
@@ -103,7 +306,34 @@ fn run_event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resu
             _ => {}
         }
     }
+    Ok(())
+}
 
+fn open_in_browser(url: &str) -> Result<()> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        bail!("refusing to open a non-HTTP URL");
+    }
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = ProcessCommand::new("cmd");
+        command.args(["/C", "start", "", url]);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = ProcessCommand::new("open");
+        command.arg(url);
+        command
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = ProcessCommand::new("xdg-open");
+        command.arg(url);
+        command
+    };
+    command
+        .spawn()
+        .with_context(|| format!("failed to launch browser for {url}"))?;
     Ok(())
 }
 
@@ -118,8 +348,22 @@ mod tests {
     }
 
     #[test]
-    fn explicit_ui_command_parses() {
-        let cli = Cli::try_parse_from(["jobscout", "ui"]).unwrap();
-        assert!(matches!(cli.command, Some(Command::Ui)));
+    fn tracker_commands_parse() {
+        let cli = Cli::try_parse_from(["jobscout", "mark", "abc123", "applied"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Mark {
+                status: ApplicationStatus::Applied,
+                ..
+            })
+        ));
+        let cli = Cli::try_parse_from(["jobscout", "note", "abc123", "follow up"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::Note { .. })));
+    }
+
+    #[test]
+    fn global_database_override_parses() {
+        let cli = Cli::try_parse_from(["jobscout", "--database", "tracker.db", "list"]).unwrap();
+        assert_eq!(cli.database.as_deref(), Some(Path::new("tracker.db")));
     }
 }
