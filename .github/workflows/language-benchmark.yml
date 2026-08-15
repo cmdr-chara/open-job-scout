@@ -1,0 +1,63 @@
+name: Go vs Rust decision benchmark
+
+on:
+  push:
+    branches:
+      - bench/go-rust-decision
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out benchmark branch
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+
+      - name: Show toolchains
+        run: |
+          go version
+          rustc --version
+          cargo --version
+          python3 --version
+          lscpu | sed -n '1,18p'
+
+      - name: Generate deterministic fixtures
+        run: python3 bench/langdecision/fixture.py
+
+      - name: Build Go release binary
+        working-directory: bench/langdecision/go
+        run: |
+          go mod tidy
+          mkdir -p ../bin
+          go build -trimpath -ldflags='-s -w' -o ../bin/go-bench .
+
+      - name: Build Rust release binary
+        working-directory: bench/langdecision/rust
+        run: |
+          cargo build --release
+          cp target/release/openjobscout-langbench-rust ../bin/rust-bench
+
+      - name: Show binary sizes
+        run: ls -lh bench/langdecision/bin
+
+      - name: Run same-runner comparison
+        run: python3 bench/langdecision/run.py
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-rust-language-decision
+          path: |
+            bench/langdecision/result.md
+            bench/langdecision/result.json
+          if-no-files-found: error
