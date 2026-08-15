@@ -7,7 +7,7 @@ mod ui;
 
 use std::{
     io,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::Command as ProcessCommand,
     time::Duration,
 };
@@ -194,6 +194,13 @@ fn print_job(job: &Job) {
     println!("Status:       {}", job.status.as_str());
     println!("Work mode:    {}", job.work_mode.as_str());
     println!("Verification: {}", job.verification);
+    if let Some(source) = job
+        .verification_source
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        println!("Verified via: {source}");
+    }
     println!("Location:     {}", fallback(&job.location));
     println!(
         "Employment:   {}",
@@ -202,8 +209,29 @@ fn print_job(job: &Job) {
     println!("Salary:       {}", job.salary_label());
     println!("Posted:       {}", fallback(&job.posted));
     println!("Source:       {}", fallback(&job.source));
+    println!("First seen:   {}", fallback(&job.first_seen));
     println!("Last seen:    {}", fallback(&job.last_seen));
+    if let Some(updated) = job
+        .status_updated_at
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        println!("Status at:    {updated}");
+    }
     println!("URL:          {}", fallback(job.preferred_url()));
+    if let Some(url) = job
+        .replacement_url
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        let title = job
+            .replacement_title
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .unwrap_or("Suggested replacement");
+        println!("Replacement:  {title}");
+        println!("               {url}");
+    }
     println!();
     println!("Why it ranked:");
     if job.reasons.is_empty() {
@@ -364,6 +392,9 @@ mod tests {
     #[test]
     fn global_database_override_parses() {
         let cli = Cli::try_parse_from(["jobscout", "--database", "tracker.db", "list"]).unwrap();
-        assert_eq!(cli.database.as_deref(), Some(Path::new("tracker.db")));
+        assert_eq!(
+            cli.database.as_deref(),
+            Some(std::path::Path::new("tracker.db"))
+        );
     }
 }
