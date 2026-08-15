@@ -91,13 +91,11 @@ def run_diagnostics(config_path: Path | None = None) -> list[Diagnostic]:
                     )
                 )
             elif version < SCHEMA_VERSION:
-                checks.append(
-                    Diagnostic(
-                        "warn",
-                        "database schema",
-                        f"Schema {version} will migrate to {SCHEMA_VERSION} on the next database command.",
-                    )
+                message = (
+                    f"Schema {version} will migrate to {SCHEMA_VERSION} "
+                    "on the next database command."
                 )
+                checks.append(Diagnostic("warn", "database schema", message))
             else:
                 checks.append(
                     Diagnostic("ok", "database schema", f"Schema {version} is current.")
