@@ -16,12 +16,16 @@ from .database import (
     VALID_STATUSES,
     find_job,
     get_jobs_by_fingerprints,
+    list_job_events,
     mark_job,
     mark_stale_jobs,
+    refresh_jobs,
     save_jobs,
 )
+from .diagnostics import run_diagnostics
 from .discovery import deduplicate, discover, import_csv
 from .exporting import write_export
+from .models import job_from_record
 from .ranking import filter_job, rank_job
 from .reporting import write_markdown
 from .tracker import SORT_ORDERS, VALID_WORK_MODES, query_jobs, tracker_summary
@@ -153,6 +157,54 @@ def cmd_mark(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_history(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    database, _ = storage_paths(config)
+    events = list_job_events(database, args.id, limit=args.limit)
+    if args.json:
+        print(json.dumps([dict(event) for event in events], ensure_ascii=False, indent=2))
+        return 0
+    if not events:
+        print("No history recorded for this job.")
+        return 0
+    print(f"History for {args.id} (newest first):")
+    for event in events:
+        timestamp = str(event["created_at"]).replace("T", " ")[:19]
+        change = ""
+        if event["old_value"] is not None or event["new_value"] is not None:
+            change = f" {event['old_value'] or '-'} -> {event['new_value'] or '-'}"
+        note = f" — {event['note']}" if event["note"] else ""
+        print(f"{timestamp}  {event['event_type']:<12}{change}{note}")
+    return 0
+
+
+def cmd_recheck(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    database, _ = storage_paths(config)
+    if args.ids:
+        unique = {}
+        for identifier in args.ids:
+            row = find_job(database, identifier)
+            unique[row["fingerprint"]] = row
+        rows = list(unique.values())
+    else:
+        rows = _filtered_rows(args, database)
+    if not rows:
+        print("No jobs matched the recheck selection.")
+        return 0
+
+    jobs = [job_from_record(row) for row in rows]
+    checked = verify_jobs(jobs, workers=args.workers)
+    checked = [rank_job(job, config) for job in checked]
+    refreshed = refresh_jobs(checked, database)
+    verification = Counter(job.verification_status for job in checked)
+    details = ", ".join(f"{status}={count}" for status, count in sorted(verification.items()))
+    print(f"Rechecked: {refreshed}")
+    print(f"Verification: {details}")
+    print("Discovery timestamps were not changed.")
+    return 0
+
+
 def cmd_report(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     database, report_dir = storage_paths(config)
@@ -206,6 +258,16 @@ def cmd_export(args: argparse.Namespace) -> int:
     path = write_export(rows, output, args.format)
     print(f"Exported {len(rows)} jobs: {path}")
     return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    checks = run_diagnostics(args.config)
+    if args.json:
+        print(json.dumps([check.as_dict() for check in checks], ensure_ascii=False, indent=2))
+    else:
+        for check in checks:
+            print(f"{check.level.upper():<5} {check.check}: {check.message}")
+    return 1 if any(check.level == "error" for check in checks) else 0
 
 
 def positive_int(value: str) -> int:
@@ -350,6 +412,43 @@ def build_parser() -> argparse.ArgumentParser:
     mark_parser.add_argument("--note", help="append a note to this job's history")
     mark_parser.set_defaults(handler=cmd_mark)
 
+    history_parser = subparsers.add_parser(
+        "history",
+        help="Show one job's event history",
+        description="Show status, verification, note, and migration events for a tracked job.",
+    )
+    add_config_argument(history_parser)
+    history_parser.add_argument("id", metavar="ID", help="full or unambiguous short job ID")
+    history_parser.add_argument(
+        "--limit", type=positive_int, default=50, metavar="N", help="maximum events (default: 50)"
+    )
+    history_parser.add_argument("--json", action="store_true", help="print structured JSON")
+    history_parser.set_defaults(handler=cmd_history)
+
+    recheck_parser = subparsers.add_parser(
+        "recheck",
+        help="Re-verify tracked jobs",
+        description=(
+            "Re-verify and re-rank existing tracker rows without updating discovery timestamps."
+        ),
+    )
+    add_config_argument(recheck_parser)
+    add_queue_arguments(recheck_parser, default_limit=50)
+    recheck_parser.add_argument(
+        "ids",
+        nargs="*",
+        metavar="ID",
+        help="specific job IDs; when supplied, queue filters are ignored",
+    )
+    recheck_parser.add_argument(
+        "--workers",
+        type=positive_int,
+        default=6,
+        metavar="N",
+        help="parallel verification workers (default: 6)",
+    )
+    recheck_parser.set_defaults(handler=cmd_recheck)
+
     report_parser = subparsers.add_parser(
         "report",
         help="Write a Markdown report",
@@ -387,6 +486,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--output", type=Path, metavar="PATH", help="write to this file"
     )
     export_parser.set_defaults(handler=cmd_export)
+
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Check the local installation",
+        description="Validate config, storage health, permissions, and discovery dependencies.",
+    )
+    add_config_argument(doctor_parser)
+    doctor_parser.add_argument("--json", action="store_true", help="print structured JSON")
+    doctor_parser.set_defaults(handler=cmd_doctor)
     return parser
 
 
