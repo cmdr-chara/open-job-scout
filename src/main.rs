@@ -5,12 +5,7 @@ mod storage;
 mod theme;
 mod ui;
 
-use std::{
-    io,
-    path::PathBuf,
-    process::Command as ProcessCommand,
-    time::Duration,
-};
+use std::{io, path::PathBuf, process::Command as ProcessCommand, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use app::App;
