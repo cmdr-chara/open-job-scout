@@ -1,0 +1,26 @@
+name: Rustfmt once
+
+on:
+  push:
+    branches:
+      - rewrite/rust-v2
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rewrite/rust-v2
+      - name: Apply canonical formatting and remove this workflow
+        run: |
+          cargo fmt --all
+          git rm .github/workflows/rustfmt-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src
+          git commit -m "Apply rustfmt to Rust v2"
+          git push origin HEAD:rewrite/rust-v2
