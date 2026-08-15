@@ -16,14 +16,15 @@ from .database import (
     VALID_STATUSES,
     find_job,
     get_jobs_by_fingerprints,
-    list_jobs,
     mark_job,
     mark_stale_jobs,
     save_jobs,
 )
 from .discovery import deduplicate, discover, import_csv
+from .exporting import write_export
 from .ranking import filter_job, rank_job
 from .reporting import write_markdown
+from .tracker import SORT_ORDERS, VALID_WORK_MODES, query_jobs, tracker_summary
 from .verification import verify_jobs
 
 
@@ -96,23 +97,40 @@ def cmd_import(args: argparse.Namespace) -> int:
     return _collect_and_save(import_csv(args.file.expanduser().resolve()), args)
 
 
+def _filtered_rows(args: argparse.Namespace, database: Path) -> list:
+    return query_jobs(
+        database,
+        status=args.status,
+        work_mode=args.work_mode,
+        source=args.source,
+        min_score=args.min_score,
+        query=args.query,
+        sort=args.sort,
+        limit=args.limit,
+    )
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     database, _ = storage_paths(config)
-    rows = list_jobs(database, status=args.status, limit=args.limit)
+    rows = _filtered_rows(args, database)
     if not rows:
         print("No jobs found.")
         return 0
     width = shutil.get_terminal_size((120, 24)).columns
-    label_width = max(24, width - 32)
-    print(f"{'ID':<10}  {'SCORE':>5}  {'STATUS':<9}  ROLE")
+    label_width = max(24, width - 41)
+    print(f"{'ID':<10}  {'SCORE':>5}  {'STATUS':<9}  {'MODE':<7}  ROLE")
     for row in rows:
         label = textwrap.shorten(
             f"{row['title']} - {row['company']}",
             width=label_width,
             placeholder="...",
         )
-        print(f"{row['fingerprint'][:10]}  {row['score']:5.1f}  {row['status']:<9}  {label}")
+        mode = row["work_mode"] or "unknown"
+        print(
+            f"{row['fingerprint'][:10]}  {row['score']:5.1f}  "
+            f"{row['status']:<9}  {mode:<7}  {label}"
+        )
     return 0
 
 
@@ -143,8 +161,50 @@ def cmd_report(args: argparse.Namespace) -> int:
         if args.output
         else report_dir / f"jobs_{datetime.now():%Y-%m-%d_%H%M%S}.md"
     )
-    rows = list_jobs(database, status=args.status, limit=args.limit)
+    rows = _filtered_rows(args, database)
     print(f"Report: {write_markdown(rows, output)}")
+    return 0
+
+
+def _format_counts(values: dict[str, int]) -> str:
+    return ", ".join(f"{label}={count}" for label, count in values.items()) or "none"
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    database, _ = storage_paths(config)
+    summary = tracker_summary(database)
+    total = int(summary["total"])
+    print(f"Tracked jobs: {total}")
+    if not total:
+        return 0
+    print(f"Average score: {summary['average_score']:.1f}")
+    print(f"Salary published: {summary['salary_published']}/{total}")
+    print(f"Status: {_format_counts(summary['statuses'])}")
+    print(f"Work mode: {_format_counts(summary['work_modes'])}")
+    print(f"Sources: {_format_counts(summary['sources'])}")
+    top_new = summary["top_new"]
+    if top_new:
+        print("Top new:")
+        for row in top_new:
+            print(
+                f"  {row['fingerprint'][:10]}  {row['score']:5.1f}  "
+                f"{row['title']} - {row['company']}"
+            )
+    return 0
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    database, report_dir = storage_paths(config)
+    rows = _filtered_rows(args, database)
+    output = (
+        args.output.expanduser().resolve()
+        if args.output
+        else report_dir / f"jobs_export_{datetime.now():%Y-%m-%d_%H%M%S}.{args.format}"
+    )
+    path = write_export(rows, output, args.format)
+    print(f"Exported {len(rows)} jobs: {path}")
     return 0
 
 
@@ -152,6 +212,16 @@ def positive_int(value: str) -> int:
     parsed = int(value)
     if parsed < 1:
         raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
+def score_value(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a number between 0 and 100") from exc
+    if not 0 <= parsed <= 100:
+        raise argparse.ArgumentTypeError("must be between 0 and 100")
     return parsed
 
 
@@ -171,6 +241,48 @@ def build_parser() -> argparse.ArgumentParser:
             default=DEFAULT_CONFIG,
             metavar="PATH",
             help=f"configuration file (default: {DEFAULT_CONFIG})",
+        )
+
+    def add_queue_arguments(
+        command_parser: argparse.ArgumentParser,
+        *,
+        default_limit: int | None,
+    ) -> None:
+        command_parser.add_argument(
+            "--status", choices=sorted(VALID_STATUSES), help="only include this application state"
+        )
+        command_parser.add_argument(
+            "--work-mode",
+            choices=sorted(VALID_WORK_MODES),
+            help="only include this work arrangement",
+        )
+        command_parser.add_argument(
+            "--source", help="only include this source, for example linkedin or google"
+        )
+        command_parser.add_argument(
+            "--min-score", type=score_value, metavar="N", help="minimum ranking score (0-100)"
+        )
+        command_parser.add_argument(
+            "--query",
+            help="search title, company, location, description, and notes",
+        )
+        command_parser.add_argument(
+            "--sort",
+            choices=sorted(SORT_ORDERS),
+            default="score",
+            help="sort by score or most recently seen (default: score)",
+        )
+        limit_help = (
+            f"maximum rows (default: {default_limit})"
+            if default_limit is not None
+            else "maximum rows (default: all)"
+        )
+        command_parser.add_argument(
+            "--limit",
+            type=positive_int,
+            default=default_limit,
+            metavar="N",
+            help=limit_help,
         )
 
     init_parser = subparsers.add_parser(
@@ -212,15 +324,10 @@ def build_parser() -> argparse.ArgumentParser:
     import_parser.set_defaults(handler=cmd_import)
 
     list_parser = subparsers.add_parser(
-        "list", help="List tracked jobs", description="Show the local review queue."
+        "list", help="List tracked jobs", description="Show and filter the local review queue."
     )
     add_config_argument(list_parser)
-    list_parser.add_argument(
-        "--status", choices=sorted(VALID_STATUSES), help="only show this application state"
-    )
-    list_parser.add_argument(
-        "--limit", type=positive_int, default=20, metavar="N", help="maximum rows (default: 20)"
-    )
+    add_queue_arguments(list_parser, default_limit=20)
     list_parser.set_defaults(handler=cmd_list)
 
     show_parser = subparsers.add_parser(
@@ -249,20 +356,37 @@ def build_parser() -> argparse.ArgumentParser:
         description="Export a Markdown snapshot from the local tracker.",
     )
     add_config_argument(report_parser)
-    report_parser.add_argument(
-        "--status", choices=sorted(VALID_STATUSES), help="only include this application state"
-    )
-    report_parser.add_argument(
-        "--limit",
-        type=positive_int,
-        default=100,
-        metavar="N",
-        help="maximum rows (default: 100)",
-    )
+    add_queue_arguments(report_parser, default_limit=100)
     report_parser.add_argument(
         "--output", type=Path, metavar="PATH", help="write to this Markdown file"
     )
     report_parser.set_defaults(handler=cmd_report)
+
+    stats_parser = subparsers.add_parser(
+        "stats",
+        help="Summarize the local tracker",
+        description="Show pipeline counts, work modes, sources, and top new jobs.",
+    )
+    add_config_argument(stats_parser)
+    stats_parser.set_defaults(handler=cmd_stats)
+
+    export_parser = subparsers.add_parser(
+        "export",
+        help="Export tracked jobs as CSV or JSON",
+        description="Export a filtered tracker view for spreadsheets or local analysis.",
+    )
+    add_config_argument(export_parser)
+    add_queue_arguments(export_parser, default_limit=None)
+    export_parser.add_argument(
+        "--format",
+        choices=("csv", "json"),
+        default="csv",
+        help="export format (default: csv)",
+    )
+    export_parser.add_argument(
+        "--output", type=Path, metavar="PATH", help="write to this file"
+    )
+    export_parser.set_defaults(handler=cmd_export)
     return parser
 
 
