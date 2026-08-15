@@ -38,9 +38,13 @@ pub fn render(frame: &mut Frame<'_>, app: &App) {
 }
 
 fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
-    let chunks = Layout::horizontal([Constraint::Length(22), Constraint::Min(36)])
+    let chunks = Layout::horizontal([Constraint::Length(30), Constraint::Min(36)])
         .margin(1)
         .split(area);
+    let tracked: usize = ApplicationStatus::ALL
+        .iter()
+        .map(|status| app.jobs.iter().filter(|job| job.status == *status).count())
+        .sum();
 
     let brand = Paragraph::new(Line::from(vec![
         Span::styled("◆ ", Style::new().fg(theme::ACCENT)),
@@ -48,6 +52,7 @@ fn render_header(frame: &mut Frame<'_>, app: &App, area: Rect) {
             "OpenJobScout",
             Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD),
         ),
+        Span::styled(format!("  {tracked} tracked"), Style::new().fg(theme::FAINT)),
     ]));
     frame.render_widget(brand, chunks[0]);
 
@@ -252,10 +257,13 @@ fn render_job_detail(frame: &mut Frame<'_>, job: Option<&Job>, area: Rect) {
         Line::from(Span::styled(skills, Style::new().fg(theme::CYAN))),
         Line::from(""),
         Line::from(Span::styled("WATCH", theme::accent())),
-        Line::from(Span::styled(concerns, Style::new().fg(theme::YELLOW))),
+        Line::from(Span::styled(concerns, Style::new().fg(theme::RED))),
         Line::from(""),
         Line::from(Span::styled("ABOUT THE ROLE", theme::accent())),
         Line::from(job.description.clone()),
+        Line::from(""),
+        Line::from(Span::styled("LISTING", theme::accent())),
+        Line::from(Span::styled(job.url.clone(), Style::new().fg(theme::MUTED))),
     ]))
     .style(theme::surface())
     .wrap(Wrap { trim: true });
@@ -501,9 +509,11 @@ mod tests {
 
     #[test]
     fn search_overlay_renders_query() {
-        let mut app = App::default();
-        app.input_mode = InputMode::Search;
-        app.search_query = "python".into();
+        let app = App {
+            input_mode: InputMode::Search,
+            search_query: "python".into(),
+            ..Default::default()
+        };
         let backend = TestBackend::new(110, 38);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|frame| render(frame, &app)).unwrap();
