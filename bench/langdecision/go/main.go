@@ -9,9 +9,9 @@ import (
     "strings"
     "time"
 
+    "github.com/PuerkitoBio/goquery"
     tea "github.com/charmbracelet/bubbletea"
     "github.com/charmbracelet/lipgloss"
-    "github.com/PuerkitoBio/goquery"
     _ "modernc.org/sqlite"
 )
 
@@ -76,8 +76,10 @@ func benchJSON(data []byte) float64 {
 
 func benchFilter(jobs []Job) float64 {
     queries := []string{"python", "backend", "engineer", "fastapi", "graduate"}
+    sequence := 0
     return bench(300, func() {
-        query := queries[sinkInt%len(queries)]
+        query := queries[sequence%len(queries)]
+        sequence++
         matches := make([]int, 0, 2048)
         for index := range jobs {
             job := &jobs[index]
