@@ -238,7 +238,10 @@ fn render_job_detail(frame: &mut Frame<'_>, job: Option<&Job>, area: Rect) {
     let metadata = Paragraph::new(Line::from(vec![
         status_badge(job.status),
         Span::raw("   "),
-        Span::styled(job.verification.clone(), verification_style(&job.verification)),
+        Span::styled(
+            job.verification.clone(),
+            verification_style(&job.verification),
+        ),
         Span::styled(" via ", Style::new().fg(theme::FAINT)),
         Span::styled(job.source.clone(), Style::new().fg(theme::MUTED)),
         Span::styled("   ·   ", Style::new().fg(theme::FAINT)),

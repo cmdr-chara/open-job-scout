@@ -203,7 +203,11 @@ impl Job {
             label.push(' ');
             label.push_str(currency);
         }
-        if let Some(source) = self.salary_source.as_deref().filter(|value| !value.is_empty()) {
+        if let Some(source) = self
+            .salary_source
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
             label.push_str(" · ");
             label.push_str(source);
         }
@@ -312,7 +316,11 @@ mod tests {
     #[test]
     fn demo_data_covers_every_application_status() {
         let jobs = demo_jobs();
-        assert!(ApplicationStatus::ALL.iter().all(|status| jobs.iter().any(|job| job.status == *status)));
+        assert!(
+            ApplicationStatus::ALL
+                .iter()
+                .all(|status| jobs.iter().any(|job| job.status == *status))
+        );
     }
 
     #[test]
@@ -325,7 +333,10 @@ mod tests {
 
     #[test]
     fn status_parser_matches_python_tracker_values() {
-        assert_eq!("interview".parse::<ApplicationStatus>().unwrap(), ApplicationStatus::Interview);
+        assert_eq!(
+            "interview".parse::<ApplicationStatus>().unwrap(),
+            ApplicationStatus::Interview
+        );
         assert!("unknown".parse::<ApplicationStatus>().is_err());
     }
 }

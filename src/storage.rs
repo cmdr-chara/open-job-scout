@@ -211,7 +211,8 @@ impl Storage {
                 created_at: row.get(4)?,
             })
         })?;
-        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     }
 
     pub fn mark_stale_jobs(&self, stale_after_days: i64) -> Result<usize> {
@@ -220,7 +221,8 @@ impl Storage {
         }
         let mut connection = self.connect()?;
         let transaction = connection.transaction()?;
-        let cutoff = (OffsetDateTime::now_utc() - Duration::days(stale_after_days)).format(&Rfc3339)?;
+        let cutoff =
+            (OffsetDateTime::now_utc() - Duration::days(stale_after_days)).format(&Rfc3339)?;
         let now = now_rfc3339()?;
         let candidates: Vec<(String, String)> = {
             let mut statement = transaction.prepare(
@@ -252,7 +254,11 @@ impl Storage {
     }
 
     fn connect(&self) -> Result<Connection> {
-        if let Some(parent) = self.path.parent().filter(|path| !path.as_os_str().is_empty()) {
+        if let Some(parent) = self
+            .path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+        {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
@@ -296,7 +302,8 @@ fn migrate_schema(connection: &Connection) -> Result<()> {
             ("status_manually_set", "INTEGER NOT NULL DEFAULT 0"),
         ] {
             if !columns.iter().any(|column| column == name) {
-                connection.execute_batch(&format!("ALTER TABLE jobs ADD COLUMN {name} {definition};"))?;
+                connection
+                    .execute_batch(&format!("ALTER TABLE jobs ADD COLUMN {name} {definition};"))?;
             }
         }
         connection.execute(
@@ -332,7 +339,10 @@ fn raw_job(row: &Row<'_>) -> RawJob {
         id: row.get("fingerprint").unwrap_or_default(),
         title: row.get("title").unwrap_or_default(),
         company: row.get("company").unwrap_or_default(),
-        location: row.get::<_, Option<String>>("location").unwrap_or_default().unwrap_or_default(),
+        location: row
+            .get::<_, Option<String>>("location")
+            .unwrap_or_default()
+            .unwrap_or_default(),
         work_mode: row.get("work_mode").unwrap_or_else(|_| "unknown".into()),
         employment_type: row.get("employment_type").unwrap_or_default(),
         status: row.get("status").unwrap_or_else(|_| "new".into()),
@@ -341,21 +351,35 @@ fn raw_job(row: &Row<'_>) -> RawJob {
         salary_max: row.get("salary_max").unwrap_or_default(),
         currency: row.get("currency").unwrap_or_default(),
         salary_source: row.get("salary_source").unwrap_or_default(),
-        source: row.get::<_, Option<String>>("source").unwrap_or_default().unwrap_or_default(),
-        source_url: row.get::<_, Option<String>>("source_url").unwrap_or_default().unwrap_or_default(),
+        source: row
+            .get::<_, Option<String>>("source")
+            .unwrap_or_default()
+            .unwrap_or_default(),
+        source_url: row
+            .get::<_, Option<String>>("source_url")
+            .unwrap_or_default()
+            .unwrap_or_default(),
         canonical_url: row.get("canonical_url").unwrap_or_default(),
-        verification: row.get("verification_status").unwrap_or_else(|_| "unverified".into()),
+        verification: row
+            .get("verification_status")
+            .unwrap_or_else(|_| "unverified".into()),
         verification_source: row.get("verification_source").unwrap_or_default(),
         replacement_url: row.get("replacement_url").unwrap_or_default(),
         replacement_title: row.get("replacement_title").unwrap_or_default(),
-        posted: row.get::<_, Option<String>>("posted_at").unwrap_or_default().unwrap_or_default(),
+        posted: row
+            .get::<_, Option<String>>("posted_at")
+            .unwrap_or_default()
+            .unwrap_or_default(),
         first_seen: row.get("first_seen_at").unwrap_or_default(),
         last_seen: row.get("last_seen_at").unwrap_or_default(),
         status_updated_at: row.get("status_updated_at").unwrap_or_default(),
         status_manually_set: row.get::<_, i64>("status_manually_set").unwrap_or_default() != 0,
         reasons: row.get("reasons").unwrap_or_else(|_| "[]".into()),
         concerns: row.get("concerns").unwrap_or_else(|_| "[]".into()),
-        description: row.get::<_, Option<String>>("description").unwrap_or_default().unwrap_or_default(),
+        description: row
+            .get::<_, Option<String>>("description")
+            .unwrap_or_default()
+            .unwrap_or_default(),
         notes: row.get("notes").unwrap_or_default(),
     }
 }
@@ -372,8 +396,7 @@ fn job_from_raw(raw: RawJob) -> Result<Job> {
         location: raw.location,
         work_mode: WorkMode::from_str(&raw.work_mode).unwrap_or(WorkMode::Unknown),
         employment_type: raw.employment_type,
-        status: ApplicationStatus::from_str(&raw.status)
-            .map_err(|error| anyhow::anyhow!(error))?,
+        status: ApplicationStatus::from_str(&raw.status).map_err(|error| anyhow::anyhow!(error))?,
         score: raw.score,
         salary_min: raw.salary_min,
         salary_max: raw.salary_max,
@@ -509,26 +532,47 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("openjobscout-{name}-{}-{unique}.sqlite3", std::process::id()))
+        std::env::temp_dir().join(format!(
+            "openjobscout-{name}-{}-{unique}.sqlite3",
+            std::process::id()
+        ))
     }
 
     fn insert_job(storage: &Storage) -> String {
         let connection = storage.connect().unwrap();
         let id = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
-        connection.execute(
-            "INSERT INTO jobs (
+        connection
+            .execute(
+                "INSERT INTO jobs (
                 fingerprint,title,company,location,remote,work_mode,employment_type,
                 description,posted_at,source,source_url,canonical_url,score,reasons,concerns,
                 verification_status,first_seen_at,last_seen_at,status,status_manually_set,notes
              ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            params![
-                id, "Backend Engineer", "Example Labs", "Italy", 1, "remote", "fulltime",
-                "Python APIs", "2026-08-15T12:00:00+00:00", "Greenhouse",
-                "https://source.test/job", "https://employer.test/job", 91.0,
-                "[\"Python\",\"Junior-friendly\"]", "[]", "verified",
-                "2026-08-15T12:00:00+00:00", "2026-08-15T12:00:00+00:00", "new", 0, ""
-            ],
-        ).unwrap();
+                params![
+                    id,
+                    "Backend Engineer",
+                    "Example Labs",
+                    "Italy",
+                    1,
+                    "remote",
+                    "fulltime",
+                    "Python APIs",
+                    "2026-08-15T12:00:00+00:00",
+                    "Greenhouse",
+                    "https://source.test/job",
+                    "https://employer.test/job",
+                    91.0,
+                    "[\"Python\",\"Junior-friendly\"]",
+                    "[]",
+                    "verified",
+                    "2026-08-15T12:00:00+00:00",
+                    "2026-08-15T12:00:00+00:00",
+                    "new",
+                    0,
+                    ""
+                ],
+            )
+            .unwrap();
         id.into()
     }
 
@@ -537,7 +581,9 @@ mod tests {
         let path = temp_database("schema");
         let storage = Storage::open(&path).unwrap();
         let connection = storage.connect().unwrap();
-        let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0)).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(version, 3);
         let _ = fs::remove_file(path);
     }
@@ -547,7 +593,13 @@ mod tests {
         let path = temp_database("status");
         let storage = Storage::open(&path).unwrap();
         let id = insert_job(&storage);
-        storage.mark_job(&id[..10], ApplicationStatus::Applied, Some("sent application")).unwrap();
+        storage
+            .mark_job(
+                &id[..10],
+                ApplicationStatus::Applied,
+                Some("sent application"),
+            )
+            .unwrap();
         let job = storage.find_job(&id[..10]).unwrap();
         assert_eq!(job.status, ApplicationStatus::Applied);
         assert!(job.status_manually_set);
