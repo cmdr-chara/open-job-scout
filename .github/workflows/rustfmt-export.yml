@@ -1,0 +1,21 @@
+name: Rustfmt export
+
+on:
+  push:
+    branches:
+      - rewrite/rust-v2
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo fmt --all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rustfmt-source
+          path: src
+          if-no-files-found: error
