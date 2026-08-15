@@ -19,6 +19,8 @@
   `--full` for the complete description.
 - Add `jobscout next` for a focused highest-priority review workflow, with optional queue
   filters and browser opening.
+- Add `jobscout review` for a guided batch-review session with open, note, reviewed,
+  applied, rejected, closed, skip, and quit actions.
 - Add `jobscout open` to launch the canonical employer URL or original source listing.
 - Add `jobscout note` so notes can be recorded without changing application state or
   manual-state ownership.
