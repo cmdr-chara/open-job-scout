@@ -32,7 +32,11 @@ receiving your CV, notes, or search history.
 - Unreviewed records not seen for the configured interval become `stale`.
 - Application states: `new`, `reviewed`, `applied`, `interview`, `rejected`,
   `offer`, `closed`, and `stale`. Manual states survive crawler refreshes.
-- Markdown reports suitable for review or archival.
+- Filter the accumulated queue by status, work mode, source, score, or text and
+  sort it by score or recency.
+- Markdown reports plus portable CSV and JSON exports for local analysis.
+- `stats` summarizes the pipeline, source mix, work modes, salary coverage, and
+  highest-ranked new jobs.
 - No automatic applications.
 
 ## Demo
@@ -102,8 +106,8 @@ Filtered out: 1
 Verification: unverified=1
 Stored or refreshed: 1
 
-ID          SCORE  STATUS     ROLE
-425a56c785   69.0  new        Junior Python Backend Engineer - Example Labs
+ID          SCORE  STATUS     MODE     ROLE
+425a56c785   69.0  new        remote   Junior Python Backend Engineer - Example Labs
 ```
 
 `jobscout show 425a56c785` explains the score instead of hiding it behind a
@@ -132,6 +136,35 @@ when you need one:
 jobscout report
 jobscout report --status interview
 ```
+
+## Work the queue
+
+As the local database grows, filter the same tracker instead of repeating the
+search manually:
+
+```powershell
+jobscout list --status new --work-mode remote --min-score 60 --query python
+jobscout list --source linkedin --sort newest
+jobscout report --work-mode remote --min-score 70
+```
+
+Get a compact pipeline snapshot:
+
+```powershell
+jobscout stats
+```
+
+Export the current filtered view for a spreadsheet or another local tool. CSV
+is the default; JSON preserves list-valued fields such as reasons and concerns:
+
+```powershell
+jobscout export --status applied --format csv
+jobscout export --work-mode remote --min-score 70 --format json --output remote-jobs.json
+```
+
+Exports are written to the configured report directory unless `--output` is
+provided. `export` includes all matching jobs by default; pass `--limit N` when
+you only want the first N rows.
 
 JobSpy is installed as the default discovery engine. The tracker and CSV
 importer remain usable when a particular job board is unavailable.
@@ -164,10 +197,17 @@ jobscout --version
 jobscout init [--output PATH] [--force]
 jobscout search [--config PATH] [--no-verify]
 jobscout import-csv FILE [--config PATH] [--no-verify]
-jobscout list [--config PATH] [--status STATUS] [--limit N]
+jobscout list [--config PATH] [--status STATUS] [--work-mode MODE] [--source SOURCE]
+              [--min-score N] [--query TEXT] [--sort score|newest] [--limit N]
 jobscout show ID [--config PATH]
 jobscout mark ID STATUS [--config PATH] [--note TEXT]
-jobscout report [--config PATH] [--status STATUS] [--limit N] [--output PATH]
+jobscout report [--config PATH] [--status STATUS] [--work-mode MODE] [--source SOURCE]
+                [--min-score N] [--query TEXT] [--sort score|newest] [--limit N]
+                [--output PATH]
+jobscout stats [--config PATH]
+jobscout export [--config PATH] [--status STATUS] [--work-mode MODE] [--source SOURCE]
+                [--min-score N] [--query TEXT] [--sort score|newest] [--limit N]
+                [--format csv|json] [--output PATH]
 ```
 
 By default, personal state is written beneath `~/.openjobscout/`. The repository
