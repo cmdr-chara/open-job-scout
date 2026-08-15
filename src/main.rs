@@ -247,7 +247,12 @@ fn command_doctor(config_path: &std::path::Path, database_path: &std::path::Path
     let checks = diagnostics::run(config_path, database_path);
     let mut failed = false;
     for check in checks {
-        println!("{:<5} {:<22} {}", check.level.to_uppercase(), check.check, check.message);
+        println!(
+            "{:<5} {:<22} {}",
+            check.level.to_uppercase(),
+            check.check,
+            check.message
+        );
         failed |= check.level == "error";
     }
     if failed {
@@ -462,14 +467,8 @@ mod tests {
     fn operational_commands_parse() {
         let stats = Cli::try_parse_from(["jobscout", "stats"]).unwrap();
         assert!(matches!(stats.command, Some(Commands::Stats)));
-        let export = Cli::try_parse_from([
-            "jobscout",
-            "export",
-            "jobs.json",
-            "--status",
-            "new",
-        ])
-        .unwrap();
+        let export =
+            Cli::try_parse_from(["jobscout", "export", "jobs.json", "--status", "new"]).unwrap();
         assert!(matches!(export.command, Some(Commands::Export { .. })));
         let doctor = Cli::try_parse_from(["jobscout", "doctor"]).unwrap();
         assert!(matches!(doctor.command, Some(Commands::Doctor)));
