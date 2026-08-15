@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -62,6 +63,13 @@ def job_dedup_key(job: Job) -> str:
     return f"source:{normalize_job_url(job.source_url)}"
 
 
+def _record_value(record: Mapping[str, object], key: str, default: object = None) -> object:
+    try:
+        return record[key]
+    except (KeyError, IndexError):
+        return default
+
+
 @dataclass(slots=True)
 class Job:
     title: str
@@ -91,3 +99,35 @@ class Job:
     @property
     def fingerprint(self) -> str:
         return job_fingerprint(self.company, self.title, self.source_url)
+
+
+def job_from_record(record: Mapping[str, object]) -> Job:
+    """Reconstruct a Job from a tracker row without changing its source identity."""
+    remote_value = _record_value(record, "remote")
+    remote = None if remote_value is None else bool(remote_value)
+    canonical_url = _record_value(record, "canonical_url")
+    return Job(
+        title=str(_record_value(record, "title", "") or ""),
+        company=str(_record_value(record, "company", "") or ""),
+        source_url=str(_record_value(record, "source_url", "") or ""),
+        location=_record_value(record, "location"),
+        remote=remote,
+        employment_type=_record_value(record, "employment_type"),
+        salary_min=_record_value(record, "salary_min"),
+        salary_max=_record_value(record, "salary_max"),
+        currency=_record_value(record, "currency"),
+        salary_source=_record_value(record, "salary_source"),
+        description=str(_record_value(record, "description", "") or ""),
+        posted_at=_record_value(record, "posted_at"),
+        source=str(_record_value(record, "source", "import") or "import"),
+        canonical_url=canonical_url,
+        original_canonical_url=canonical_url,
+        score=float(_record_value(record, "score", 0.0) or 0.0),
+        verification_status=str(
+            _record_value(record, "verification_status", "unverified") or "unverified"
+        ),
+        work_mode=str(_record_value(record, "work_mode", "unknown") or "unknown"),
+        replacement_url=_record_value(record, "replacement_url"),
+        replacement_title=_record_value(record, "replacement_title"),
+        verification_source=_record_value(record, "verification_source"),
+    )
