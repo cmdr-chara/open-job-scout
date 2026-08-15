@@ -48,7 +48,8 @@ Default locations:
 
 On macOS or Linux, the corresponding defaults are
 `~/.openjobscout/config.toml`, `~/.openjobscout/jobs.sqlite3`, and
-`~/.openjobscout/reports/`.
+`~/.openjobscout/reports/`. Newly created config and database files use mode
+`0600` on Unix-like systems so other local users cannot read them by default.
 
 Open the config on Windows:
 
@@ -134,11 +135,16 @@ It also writes a timestamped Markdown report to the configured report directory.
 
 ```powershell
 jobscout list --status new
+jobscout list --status new --work-mode remote --min-score 60 --query python
 jobscout show JOB_ID
 ```
 
 `JOB_ID` can be the short ID printed by `list`. `show` prints the complete local
 record as JSON; it does not open a browser page.
+
+The queue can be filtered by application state, work mode, source, minimum
+score, and free text. It can be sorted by score or by the most recent discovery
+timestamp with `--sort newest`.
 
 Always open the canonical URL and confirm:
 
@@ -177,17 +183,65 @@ stale
 A refreshed listing does not overwrite an `applied`, `interview`, `rejected`,
 or `offer` state.
 
-## 9. Generate reports
+Schema v3 also stores an append-only event history for each job. Inspect it with:
+
+```powershell
+jobscout history JOB_ID
+jobscout history JOB_ID --json
+```
+
+History contains discovery, verification changes, automatic state transitions,
+manual status changes, notes, and a migration snapshot for trackers created by
+older OpenJobScout versions.
+
+## 9. Recheck existing jobs without rediscovery
+
+Use `recheck` when you want to know whether already tracked URLs are still
+active without running the configured job-board searches again:
+
+```powershell
+jobscout recheck JOB_ID
+jobscout recheck JOB_ID OTHER_ID
+```
+
+You can also recheck a filtered queue slice:
+
+```powershell
+jobscout recheck --status new --work-mode remote --min-score 60
+jobscout recheck --status closed --limit 20
+```
+
+The default queue limit is 50. `--workers` controls parallel URL verification.
+A recheck updates verification metadata, ATS enrichment, and ranking, but it
+does **not** update `last_seen_at`, because the job was not rediscovered.
+
+Automatic `closed` jobs return to `new` when a later recheck proves they are
+active. Manual states remain authoritative, and `stale` remains stale until a
+new discovery sees the listing again.
+
+## 10. Generate reports and exports
 
 ```powershell
 jobscout report
 jobscout report --status applied
 jobscout report --status interview --output interviews.md
+jobscout export --status applied --format csv
+jobscout export --work-mode remote --min-score 70 --format json
 ```
 
-Reports are Markdown snapshots. SQLite remains the source of truth.
+Markdown reports and CSV/JSON exports can use the same tracker filters as
+`list`. Reports are snapshots; SQLite remains the source of truth.
 
-## 10. Import an existing CSV
+For a compact tracker overview:
+
+```powershell
+jobscout stats
+```
+
+`stats` includes status, source, and work-mode counts, salary coverage, average
+score, and the highest-ranked new jobs.
+
+## 11. Import an existing CSV
 
 OpenJobScout accepts JobSpy-compatible CSV columns:
 
@@ -204,6 +258,27 @@ An imported CSV can contain personal notes or a job-search history. Keep it
 outside version control; `data/` is ignored by the bundled `.gitignore` and is
 a good local location when working from this repository.
 
+## 12. Check local health
+
+Run the local diagnostic command before debugging search failures or manually
+inspecting the SQLite file:
+
+```powershell
+jobscout doctor
+jobscout doctor --json
+```
+
+`doctor` checks:
+
+- configuration validity;
+- disabled source choices such as the current Indeed adapter;
+- SQLite schema compatibility and `PRAGMA quick_check`;
+- Unix config/database file permissions;
+- report-directory writability;
+- whether JobSpy is importable.
+
+It does not run a live job-board search.
+
 ## Troubleshooting
 
 ### `jobscout` is not recognized
@@ -216,6 +291,7 @@ uv run jobscout --help
 
 ### A source returns no jobs
 
+- Run `jobscout doctor` first.
 - Try one search term and one source.
 - Lower `results_per_term`.
 - Confirm the location spelling.
@@ -225,12 +301,15 @@ uv run jobscout --help
 ### A Google result says `Job not found`
 
 This is a stale index result. Keep the record as `closed`; do not apply through
-mirrors or submit personal data to unrelated pages.
+mirrors or submit personal data to unrelated pages. You can later use
+`jobscout recheck JOB_ID` to see whether the official listing became active
+again without changing its discovery timestamp.
 
 ### Where is personal data stored?
 
-The configuration, SQLite database, reports, notes, and imported CSV stay on
-your machine. The program does make requests to configured job boards and to
-public job or ATS URLs while discovering or verifying listings. It does not
-upload a CV or submit applications. Local data paths and `data/` are excluded
-from the repository by the default `.gitignore`.
+The configuration, SQLite database, reports, notes, event history, and imported
+CSV stay on your machine. The program does make requests to configured job
+boards and to public job or ATS URLs while discovering or verifying listings.
+`recheck` only performs the public job/ATS verification part. OpenJobScout does
+not upload a CV or submit applications. Local data paths and `data/` are
+excluded from the repository by the default `.gitignore`.
