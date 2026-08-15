@@ -88,6 +88,32 @@ def test_queue_filters_and_export_options_parse() -> None:
     assert stats_args.command == "stats"
 
 
+def test_friendly_review_commands_parse() -> None:
+    show = build_parser().parse_args(["show", "abc123", "--json", "--full"])
+    assert show.id == "abc123"
+    assert show.json is True
+    assert show.full is True
+
+    open_args = build_parser().parse_args(["open", "abc123", "--source"])
+    assert open_args.id == "abc123"
+    assert open_args.source is True
+
+    note = build_parser().parse_args(["note", "abc123", "Follow up Friday"])
+    assert note.id == "abc123"
+    assert note.text == "Follow up Friday"
+
+    next_args = build_parser().parse_args(
+        ["next", "--work-mode", "remote", "--min-score", "70", "--open"]
+    )
+    assert next_args.work_mode == "remote"
+    assert next_args.min_score == 70
+    assert next_args.open is True
+
+    alias = build_parser().parse_args(["view", "abc123"])
+    assert alias.id == "abc123"
+    assert callable(alias.handler)
+
+
 def test_history_recheck_and_doctor_options_parse() -> None:
     history = build_parser().parse_args(["history", "abc123", "--json", "--limit", "10"])
     assert history.id == "abc123"
