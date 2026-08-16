@@ -8,7 +8,7 @@ use time::{OffsetDateTime, format_description};
 
 use crate::{
     config::{expand_path, load_config},
-    importing, ranking, reporting,
+    importing, migration, ranking, reporting,
     storage::Storage,
     verification,
 };
@@ -55,6 +55,7 @@ pub fn import_csv(
             .then_with(|| right.posted.cmp(&left.posted))
     });
 
+    migration::reconcile_existing_ids(storage, &mut retained)?;
     let stored = importing::save_jobs(storage, &retained)?;
     let stale = storage.mark_stale_jobs(config.storage.stale_after_days)?;
     let ids = retained

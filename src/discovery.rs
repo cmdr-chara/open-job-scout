@@ -1,14 +1,14 @@
-use std::{collections::HashSet, path::{Path, PathBuf}};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Result, bail};
 use time::{OffsetDateTime, format_description};
 
 use crate::{
     config::{expand_path, load_config},
-    importing,
-    providers,
-    ranking,
-    reporting,
+    importing, migration, providers, ranking, reporting,
     storage::Storage,
     verification,
 };
@@ -52,6 +52,7 @@ pub fn search(storage: &Storage, config_path: &Path, workers: usize) -> Result<P
             .then_with(|| right.posted.cmp(&left.posted))
     });
 
+    migration::reconcile_existing_ids(storage, &mut retained)?;
     let stored = importing::save_jobs(storage, &retained)?;
     let stale = storage.mark_stale_jobs(config.storage.stale_after_days)?;
     let ids = retained
