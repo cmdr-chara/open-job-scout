@@ -1,7 +1,7 @@
 use std::{
     collections::{HashSet, VecDeque},
     env, fs,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    net::{Ipv4Addr, Ipv6Addr},
     path::Path,
     time::Duration,
 };
@@ -227,7 +227,7 @@ fn discover_with_client(
         }
         let Some(scrape_id) = scrape_id(&data) else {
             batch.errors.push(format!(
-                "interaction requested for {url}, but Firecrawl returned no scrapeId"
+                "interaction requested for {url}, but Firecrawl returned no valid scrapeId"
             ));
             continue;
         };
@@ -272,9 +272,7 @@ impl FirecrawlClient {
             .send()
             .context("Firecrawl request failed")?;
         let status = response.status();
-        let value: Value = response
-            .json()
-            .context("Firecrawl returned invalid JSON")?;
+        let value: Value = response.json().context("Firecrawl returned invalid JSON")?;
         if !status.is_success() || value.get("success").and_then(Value::as_bool) == Some(false) {
             let detail = value
                 .get("error")
@@ -286,14 +284,13 @@ impl FirecrawlClient {
     }
 
     fn search(&self, query: &str, config: &FirecrawlConfig) -> Result<Vec<Value>> {
-        let mut payload = Map::from_iter([
-            ("query".into(), Value::String(query.into())),
-            ("limit".into(), json!(config.search_limit_per_term)),
-            ("sources".into(), json!(["web"])),
-            ("safe".into(), Value::Bool(true)),
-            ("timeout".into(), json!(config.timeout_seconds * 1_000)),
-            ("ignoreInvalidURLs".into(), Value::Bool(true)),
-        ]);
+        let mut payload = Map::new();
+        payload.insert("query".into(), Value::String(query.into()));
+        payload.insert("limit".into(), json!(config.search_limit_per_term));
+        payload.insert("sources".into(), json!(["web"]));
+        payload.insert("safe".into(), Value::Bool(true));
+        payload.insert("timeout".into(), json!(config.timeout_seconds * 1_000));
+        payload.insert("ignoreInvalidURLs".into(), Value::Bool(true));
         if !config.include_domains.is_empty() {
             payload.insert("includeDomains".into(), json!(config.include_domains));
         } else if !config.exclude_domains.is_empty() {
@@ -330,7 +327,7 @@ impl FirecrawlClient {
 
     fn interact(&self, scrape_id: &str, config: &FirecrawlConfig) -> Result<Vec<Value>> {
         let response = self.post(
-            &format!("/scrape/{}/interact", percent_encoding::utf8_percent_encode(scrape_id, percent_encoding::NON_ALPHANUMERIC)),
+            &format!("/scrape/{scrape_id}/interact"),
             &json!({
                 "prompt": INTERACT_PROMPT,
                 "timeout": config.timeout_seconds,
@@ -348,16 +345,14 @@ impl FirecrawlClient {
     }
 
     fn stop_interaction(&self, scrape_id: &str) {
-        let path = format!(
-            "{API_ROOT}/scrape/{}/interact",
-            percent_encoding::utf8_percent_encode(scrape_id, percent_encoding::NON_ALPHANUMERIC)
-        );
-        let _ = self
+        if let Ok(response) = self
             .client
-            .delete(path)
+            .delete(format!("{API_ROOT}/scrape/{scrape_id}/interact"))
             .bearer_auth(&self.api_key)
             .send()
-            .and_then(reqwest::blocking::Response::error_for_status);
+        {
+            let _ = response.error_for_status();
+        }
     }
 }
 
@@ -571,7 +566,7 @@ fn public_ipv6(address: Ipv6Addr) -> bool {
 fn valid_domain(value: &str) -> bool {
     let value = value.trim();
     !value.is_empty()
-        && !value.contains(char::is_whitespace)
+        && !value.chars().any(char::is_whitespace)
         && !value.contains("//")
         && !value.contains('/')
         && !value.contains(':')
@@ -596,8 +591,16 @@ fn scrape_id(data: &Value) -> Option<String> {
         .get("scrapeId")
         .or_else(|| metadata.get("scrape_id"))
         .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
+        .filter(|value| valid_scrape_id(value))
         .map(str::to_owned)
+}
+
+fn valid_scrape_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 fn parse_json_text(value: &str) -> Value {
@@ -708,8 +711,15 @@ mod tests {
     }
 
     #[test]
+    fn scrape_ids_are_path_safe() {
+        assert!(valid_scrape_id("550e8400-e29b-41d4-a716-446655440000"));
+        assert!(!valid_scrape_id("../escape"));
+        assert!(!valid_scrape_id("id/child"));
+    }
+
+    #[test]
     fn ip_address_public_checks_reject_non_global_ranges() {
-        assert!(!public_ipv4(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)).to_string().parse().unwrap()));
+        assert!(!public_ipv4(Ipv4Addr::new(192, 168, 1, 1)));
         assert!(!public_ipv6("::1".parse().unwrap()));
     }
 }
