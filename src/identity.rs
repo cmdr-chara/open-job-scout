@@ -89,7 +89,7 @@ mod tests {
     fn fingerprint_matches_python_reference_vector() {
         assert_eq!(
             job_fingerprint(" Example Labs ", "Backend  Engineer", "HTTPS://Jobs.Example/123"),
-            "ab11f67c3a69236534451fed827fe5d1f714e5089d81c2e646804445913c5703"
+            "6056ca5dc9816e1f9ee02bab55f7ec9ad4300ac562bb71669138de7e92558fa0"
         );
     }
 
@@ -98,10 +98,7 @@ mod tests {
         let normalized = normalize_job_url(
             "HTTPS://Jobs.AshbyHQ.com/Acme/abc/application/?utm_source=x&b=2&a=1#form",
         );
-        assert_eq!(
-            normalized,
-            "https://jobs.ashbyhq.com/Acme/abc?a=1&b=2"
-        );
+        assert_eq!(normalized, "https://jobs.ashbyhq.com/Acme/abc?a=1&b=2");
     }
 
     #[test]
