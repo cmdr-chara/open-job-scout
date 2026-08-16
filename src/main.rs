@@ -1,10 +1,12 @@
 mod app;
 mod config;
 mod diagnostics;
+mod discovery;
 mod exporting;
 mod identity;
 mod importing;
 mod model;
+mod providers;
 mod ranking;
 mod reporting;
 mod storage;
@@ -56,6 +58,11 @@ struct Cli {
 enum Commands {
     /// Open the interactive terminal application.
     Ui,
+    /// Discover jobs directly from configured public ATS career APIs.
+    Search {
+        #[arg(long, default_value_t = 6)]
+        workers: usize,
+    },
     /// List tracked jobs for scripts and quick terminal checks.
     List {
         #[arg(long)]
@@ -134,6 +141,9 @@ fn main() -> Result<()> {
     let storage = Storage::open(database)?;
     match cli.command.unwrap_or(Commands::Ui) {
         Commands::Ui => run_ui(storage),
+        Commands::Search { workers } => {
+            discovery::search(&storage, &config_path, workers).map(|_| ())
+        }
         Commands::List {
             status,
             query,
@@ -552,6 +562,11 @@ mod tests {
 
     #[test]
     fn operational_commands_parse() {
+        let search = Cli::try_parse_from(["jobscout", "search", "--workers", "4"]).unwrap();
+        assert!(matches!(
+            search.command,
+            Some(Commands::Search { workers: 4 })
+        ));
         let stats = Cli::try_parse_from(["jobscout", "stats"]).unwrap();
         assert!(matches!(stats.command, Some(Commands::Stats)));
         let rerank = Cli::try_parse_from(["jobscout", "rerank"]).unwrap();

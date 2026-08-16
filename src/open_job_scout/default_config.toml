@@ -46,3 +46,12 @@ database = "~/.openjobscout/jobs.sqlite3"
 report_directory = "~/.openjobscout/reports"
 # Unreviewed jobs not seen for this many days become stale, never silently deleted.
 stale_after_days = 30
+
+# Optional first-party public career boards used by the Rust native search.
+# Values are board/company identifiers, not full URLs.
+[providers]
+greenhouse = []
+lever = []
+lever_eu = []
+ashby = []
+recruitee = []
