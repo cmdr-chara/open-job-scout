@@ -1,0 +1,73 @@
+name: Rust release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show toolchain
+        run: |
+          rustc --version
+          cargo --version
+      - name: Test locked dependency graph
+        run: cargo test --locked --all-targets --all-features
+      - name: Build optimized binary
+        run: cargo build --locked --release
+      - name: Package Unix binary
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+          name="openjobscout-${os}-${arch}"
+          mkdir -p dist
+          cp target/release/jobscout "dist/jobscout"
+          tar -C dist -czf "${name}.tar.gz" jobscout
+          if command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "${name}.tar.gz" > "${name}.tar.gz.sha256"
+          else
+            sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256"
+          fi
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/jobscout.exe dist/jobscout.exe
+          $arch = $env:RUNNER_ARCH.ToLower()
+          $name = "openjobscout-windows-$arch.zip"
+          Compress-Archive -Path dist/jobscout.exe -DestinationPath $name -Force
+          $hash = (Get-FileHash $name -Algorithm SHA256).Hash.ToLower()
+          "$hash  $name" | Set-Content "$name.sha256" -NoNewline
+      - name: Upload Unix artifact
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: openjobscout-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            openjobscout-*.tar.gz
+            openjobscout-*.tar.gz.sha256
+          if-no-files-found: error
+      - name: Upload Windows artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: openjobscout-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            openjobscout-windows-*.zip
+            openjobscout-windows-*.zip.sha256
+          if-no-files-found: error
