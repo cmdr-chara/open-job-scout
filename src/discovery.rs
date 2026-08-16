@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    env,
     path::{Path, PathBuf},
 };
 
@@ -16,6 +17,14 @@ use crate::{
     storage::Storage,
     verification,
 };
+
+pub(crate) fn firecrawl_status(config_path: &Path) -> Result<(bool, bool)> {
+    let config = firecrawl::load(config_path)?;
+    let key_present = env::var("FIRECRAWL_API_KEY")
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty());
+    Ok((config.enabled, key_present))
+}
 
 pub fn search(storage: &Storage, config_path: &Path, workers: usize) -> Result<PathBuf> {
     if workers == 0 {
