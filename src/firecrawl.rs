@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Context, Result, bail};
 use reqwest::blocking::Client;
 use serde::Deserialize;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use url::{Host, Url};
 
 use crate::{
@@ -34,7 +34,7 @@ const DEFAULT_EXCLUDE_DOMAINS: &[&str] = &[
     "recruitee.com",
 ];
 
-const EXTRACTION_PROMPT: &str = "Classify this public page as a single job posting, a careers/jobs index, or other. Use only facts visible on the page. Never infer missing company, salary, location, remote status, employment type, dates, or URLs. For a single currently open job, return the normalized job fields and preserve the employer's description text without navigation/cookie/footer boilerplate. For a careers index, return public job-posting links visible on the page. Set requires_interaction only when ordinary public navigation or a load-more control is needed to reveal listings. Do not log in, fill an application, solve or bypass a CAPTCHA, or bypass any access control.";
+const EXTRACTION_PROMPT: &str = "Classify this public page as a single job posting, a careers/jobs index, or other. Use only facts visible on the page. Never infer missing company, salary, location, remote status, employment type, dates, or URLs. Salary fields are annual compensation only: include them only when the employer explicitly publishes annual values on the page; never estimate or annualize hourly, monthly, daily, or otherwise ambiguous compensation. For a single currently open job, return the normalized job fields and preserve the employer's description text without navigation/cookie/footer boilerplate. For a careers index, return public job-posting links visible on the page. Set requires_interaction only when ordinary public navigation or a load-more control is needed to reveal listings. Do not log in, fill an application, solve or bypass a CAPTCHA, or bypass any access control.";
 
 const INTERACT_PROMPT: &str = "This is an explicitly allowed public careers page. Reveal job links only through normal public navigation or load-more controls. Do not log in, enter personal data, fill an application, solve or bypass a CAPTCHA, or bypass any access control. Return only JSON with this shape: {\"job_links\":[{\"title\":\"optional title\",\"url\":\"https://...\"}]}. If public job links cannot be revealed without a challenge or authentication, return {\"job_links\":[]}.";
 
@@ -141,7 +141,7 @@ fn discover_with_client(
     let interact_urls = config
         .interact_urls
         .iter()
-        .filter_map(|value| public_http_url(value).map(|url| url_key(&url)))
+        .filter_map(|value| public_http_url(value).map(normalized_url_key))
         .collect::<HashSet<_>>();
 
     for value in config.career_urls.iter().chain(&config.interact_urls) {
@@ -173,12 +173,15 @@ fn discover_with_client(
     }
 
     while let Some(url) = queue.pop_front() {
-        let key = url_key(&url);
+        if batch.scrapes >= config.max_scrapes {
+            break;
+        }
+        let Some(parsed_url) = public_http_url(&url) else {
+            continue;
+        };
+        let key = normalized_url_key(parsed_url);
         queued.remove(&key);
-        if batch.scrapes >= config.max_scrapes || !scraped.insert(key.clone()) {
-            if batch.scrapes >= config.max_scrapes {
-                break;
-            }
+        if !scraped.insert(key.clone()) {
             continue;
         }
 
@@ -284,19 +287,23 @@ impl FirecrawlClient {
     }
 
     fn search(&self, query: &str, config: &FirecrawlConfig) -> Result<Vec<Value>> {
-        let mut payload = Map::new();
-        payload.insert("query".into(), Value::String(query.into()));
-        payload.insert("limit".into(), json!(config.search_limit_per_term));
-        payload.insert("sources".into(), json!(["web"]));
-        payload.insert("safe".into(), Value::Bool(true));
-        payload.insert("timeout".into(), json!(config.timeout_seconds * 1_000));
-        payload.insert("ignoreInvalidURLs".into(), Value::Bool(true));
+        let mut payload = json!({
+            "query": query,
+            "limit": config.search_limit_per_term,
+            "sources": ["web"],
+            "safe": true,
+            "timeout": config.timeout_seconds * 1_000,
+            "ignoreInvalidURLs": true,
+        });
+        let object = payload
+            .as_object_mut()
+            .expect("Firecrawl search payload must be an object");
         if !config.include_domains.is_empty() {
-            payload.insert("includeDomains".into(), json!(config.include_domains));
+            object.insert("includeDomains".into(), json!(config.include_domains));
         } else if !config.exclude_domains.is_empty() {
-            payload.insert("excludeDomains".into(), json!(config.exclude_domains));
+            object.insert("excludeDomains".into(), json!(config.exclude_domains));
         }
-        let response = self.post("/search", &Value::Object(payload))?;
+        let response = self.post("/search", &payload)?;
         Ok(response
             .get("data")
             .and_then(|data| data.get("web"))
@@ -425,7 +432,7 @@ fn job_from_extracted(value: Option<&Value>, source_url: &str) -> Option<Job> {
         remote = match work_mode {
             WorkMode::Remote => Some(true),
             WorkMode::Onsite => Some(false),
-            _ => None,
+            WorkMode::Hybrid | WorkMode::Unknown => None,
         };
     }
     let salary_min = nonnegative_number(value.get("salary_min"));
@@ -511,10 +518,9 @@ fn enqueue(
     let Some(url) = public_http_url(value) else {
         return;
     };
-    let value = url.to_string();
-    let key = url_key(&value);
+    let key = normalized_url_key(url.clone());
     if !scraped.contains(&key) && queued.insert(key) {
-        queue.push_back(value);
+        queue.push_back(url.to_string());
     }
 }
 
@@ -565,18 +571,18 @@ fn public_ipv6(address: Ipv6Addr) -> bool {
 
 fn valid_domain(value: &str) -> bool {
     let value = value.trim();
-    !value.is_empty()
-        && !value.chars().any(char::is_whitespace)
-        && !value.contains("//")
-        && !value.contains('/')
-        && !value.contains(':')
-        && !matches!(value.to_ascii_lowercase().as_str(), "localhost" | "local")
+    if value.is_empty()
+        || value.chars().any(char::is_whitespace)
+        || value.contains("//")
+        || value.contains('/')
+        || value.contains(':')
+    {
+        return false;
+    }
+    public_http_url(&format!("https://{value}/")).is_some()
 }
 
-fn url_key(value: &str) -> String {
-    let Ok(mut url) = Url::parse(value) else {
-        return value.trim().to_owned();
-    };
+fn normalized_url_key(mut url: Url) -> String {
     url.set_fragment(None);
     if url.path().len() > 1 {
         let path = url.path().trim_end_matches('/').to_owned();
