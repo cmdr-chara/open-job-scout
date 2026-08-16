@@ -69,14 +69,23 @@ struct ResolveResult {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Ats {
-    Greenhouse { board: String, job_id: String },
+    Greenhouse {
+        board: String,
+        job_id: String,
+    },
     Lever {
         region: LeverRegion,
         site: String,
         posting: String,
     },
-    Ashby { board: String, posting: String },
-    Recruitee { company: String, slug: String },
+    Ashby {
+        board: String,
+        posting: String,
+    },
+    Recruitee {
+        company: String,
+        slug: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -222,7 +231,9 @@ pub fn verify_jobs(jobs: Vec<Job>, workers: usize) -> Vec<Job> {
         return jobs.into_iter().map(verify_job).collect();
     }
     let worker_count = workers.max(1).min(jobs.len());
-    let queue = Arc::new(Mutex::new(VecDeque::from_iter(jobs.into_iter().enumerate())));
+    let queue = Arc::new(Mutex::new(VecDeque::from_iter(
+        jobs.into_iter().enumerate(),
+    )));
     let (sender, receiver) = mpsc::channel();
     thread::scope(|scope| {
         for _ in 0..worker_count {
@@ -230,7 +241,10 @@ pub fn verify_jobs(jobs: Vec<Job>, workers: usize) -> Vec<Job> {
             let sender = sender.clone();
             scope.spawn(move || {
                 loop {
-                    let item = queue.lock().expect("verification queue poisoned").pop_front();
+                    let item = queue
+                        .lock()
+                        .expect("verification queue poisoned")
+                        .pop_front();
                     let Some((index, job)) = item else {
                         break;
                     };
@@ -412,7 +426,9 @@ fn validate_parsed_target(mut url: Url) -> Result<ValidatedTarget, FetchError> {
         Host::Domain(domain) => {
             let domain = domain.trim_end_matches('.').to_ascii_lowercase();
             if domain == "localhost" || domain.ends_with(".localhost") || domain.is_empty() {
-                return Err(FetchError::Unsafe("localhost is not a public target".into()));
+                return Err(FetchError::Unsafe(
+                    "localhost is not a public target".into(),
+                ));
             }
             if url.host_str().is_some_and(|host| host.ends_with('.')) {
                 url.set_host(Some(&domain))
@@ -459,9 +475,7 @@ fn is_public_ip(address: IpAddr) -> bool {
                 return false;
             }
             // Reject IPv4-mapped/compatible literals; ordinary public IPv4 is accepted directly.
-            if segments[..5] == [0, 0, 0, 0, 0]
-                && (segments[5] == 0 || segments[5] == 0xffff)
-            {
+            if segments[..5] == [0, 0, 0, 0, 0] && (segments[5] == 0 || segments[5] == 0xffff) {
                 return false;
             }
             true
@@ -609,9 +623,11 @@ fn verify_ats(job: &mut Job, ats: &Ats, resolved: &str) -> Result<(), ProviderEr
                 "https://boards-api.greenhouse.io/v1/boards",
                 &[board, "jobs", job_id],
             )?;
-            api.query_pairs_mut().append_pair("pay_transparency", "true");
+            api.query_pairs_mut()
+                .append_pair("pay_transparency", "true");
             let payload = request_json(api, 10)?;
-            job.canonical_url = string_field(&payload, "absolute_url").or_else(|| Some(resolved.into()));
+            job.canonical_url =
+                string_field(&payload, "absolute_url").or_else(|| Some(resolved.into()));
             enrich_greenhouse(job, &payload);
         }
         Ats::Lever {
@@ -649,10 +665,7 @@ fn verify_ats(job: &mut Job, ats: &Ats, resolved: &str) -> Result<(), ProviderEr
             }
         }
         Ats::Ashby { board, posting } => {
-            let mut api = build_api_url(
-                "https://api.ashbyhq.com/posting-api/job-board",
-                &[board],
-            )?;
+            let mut api = build_api_url("https://api.ashbyhq.com/posting-api/job-board", &[board])?;
             api.query_pairs_mut()
                 .append_pair("includeCompensation", "true");
             let payload = request_json(api, 10)?;
@@ -786,8 +799,12 @@ fn set_salary(
     let divisor = if cents { 100.0 } else { 1.0 };
     let low = minimum.and_then(number_value);
     let high = maximum.and_then(number_value);
-    job.salary_min = low.filter(|value| *value >= 0.0).map(|value| value / divisor);
-    job.salary_max = high.filter(|value| *value >= 0.0).map(|value| value / divisor);
+    job.salary_min = low
+        .filter(|value| *value >= 0.0)
+        .map(|value| value / divisor);
+    job.salary_max = high
+        .filter(|value| *value >= 0.0)
+        .map(|value| value / divisor);
     if let Some(currency) = currency.and_then(value_nonempty_string) {
         job.currency = Some(currency);
     }
@@ -827,7 +844,9 @@ fn ashby_job_matches(item: &Value, board: &str, posting: &str) -> bool {
             continue;
         };
         let segments = decoded_segments(&url);
-        if url.host_str().is_some_and(|host| host.eq_ignore_ascii_case("jobs.ashbyhq.com"))
+        if url
+            .host_str()
+            .is_some_and(|host| host.eq_ignore_ascii_case("jobs.ashbyhq.com"))
             && matches!(segments.len(), 2 | 3)
             && segments[0] == board
             && segments[1] == posting
@@ -845,7 +864,10 @@ fn suggest_ashby_replacement(job: &mut Job, payload: &Value, board: &str, postin
     };
     let mut candidates = items.iter().filter(|item| {
         item.as_object().is_some()
-            && item.get("isListed").and_then(Value::as_bool).unwrap_or(true)
+            && item
+                .get("isListed")
+                .and_then(Value::as_bool)
+                .unwrap_or(true)
             && item
                 .get("title")
                 .map(value_string)
@@ -858,11 +880,12 @@ fn suggest_ashby_replacement(job: &mut Job, payload: &Value, board: &str, postin
     if candidates.next().is_some() {
         return;
     }
-    if let Some(replacement) = string_field(candidate, "jobUrl")
-        .or_else(|| string_field(candidate, "applyUrl"))
+    if let Some(replacement) =
+        string_field(candidate, "jobUrl").or_else(|| string_field(candidate, "applyUrl"))
     {
         job.replacement_url = Some(replacement);
-        job.replacement_title = string_field(candidate, "title").or_else(|| Some(job.title.clone()));
+        job.replacement_title =
+            string_field(candidate, "title").or_else(|| Some(job.title.clone()));
     }
 }
 
@@ -893,11 +916,12 @@ fn suggest_recruitee_replacement(job: &mut Job, payload: &Value, slug: &str) {
     if candidates.next().is_some() {
         return;
     }
-    if let Some(replacement) = string_field(candidate, "careers_url")
-        .or_else(|| string_field(candidate, "url"))
+    if let Some(replacement) =
+        string_field(candidate, "careers_url").or_else(|| string_field(candidate, "url"))
     {
         job.replacement_url = Some(replacement);
-        job.replacement_title = string_field(candidate, "title").or_else(|| Some(job.title.clone()));
+        job.replacement_title =
+            string_field(candidate, "title").or_else(|| Some(job.title.clone()));
     }
 }
 
@@ -968,7 +992,8 @@ mod tests {
     fn closed_marker_must_be_page_level_when_headings_exist() {
         let incidental = "<html><head><title>Backend Engineer</title></head><body><p>FAQ: an old job is no longer available.</p></body></html>";
         assert!(!page_indicates_closed(incidental));
-        let closed = "<html><head><title>Job is no longer available</title></head><body></body></html>";
+        let closed =
+            "<html><head><title>Job is no longer available</title></head><body></body></html>";
         assert!(page_indicates_closed(closed));
     }
 

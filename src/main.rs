@@ -238,11 +238,7 @@ fn command_rerank(storage: &Storage, config_path: &std::path::Path) -> Result<()
     Ok(())
 }
 
-fn command_recheck(
-    storage: &Storage,
-    config_path: &std::path::Path,
-    workers: usize,
-) -> Result<()> {
+fn command_recheck(storage: &Storage, config_path: &std::path::Path, workers: usize) -> Result<()> {
     if workers == 0 {
         bail!("workers must be at least 1");
     }
@@ -532,7 +528,10 @@ mod tests {
         let rerank = Cli::try_parse_from(["jobscout", "rerank"]).unwrap();
         assert!(matches!(rerank.command, Some(Commands::Rerank)));
         let recheck = Cli::try_parse_from(["jobscout", "recheck", "--workers", "4"]).unwrap();
-        assert!(matches!(recheck.command, Some(Commands::Recheck { workers: 4 })));
+        assert!(matches!(
+            recheck.command,
+            Some(Commands::Recheck { workers: 4 })
+        ));
         let export =
             Cli::try_parse_from(["jobscout", "export", "jobs.json", "--status", "new"]).unwrap();
         assert!(matches!(export.command, Some(Commands::Export { .. })));
