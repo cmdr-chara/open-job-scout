@@ -86,6 +86,9 @@ pub struct FirecrawlBatch {
     pub searches: usize,
     pub scrapes: usize,
     pub interactions: usize,
+    /// True after an empty search or at least one successful scrape.
+    /// Counters alone cannot distinguish failed scrapes from a valid empty search.
+    pub successful: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -161,10 +164,17 @@ fn discover_with_client(
             match client.search(&query, config) {
                 Ok(results) => {
                     batch.searches += 1;
+                    let mut valid_targets = 0usize;
                     for result in results {
                         if let Some(url) = result.get("url").and_then(Value::as_str) {
+                            if public_http_url(url).is_some() {
+                                valid_targets += 1;
+                            }
                             enqueue(url, &mut queue, &mut queued, &scraped);
                         }
+                    }
+                    if valid_targets == 0 {
+                        batch.successful = true;
                     }
                 }
                 Err(error) => batch.errors.push(format!("search {term:?}: {error:#}")),
@@ -172,8 +182,9 @@ fn discover_with_client(
         }
     }
 
+    let mut scrape_attempts = 0usize;
     while let Some(url) = queue.pop_front() {
-        if batch.scrapes >= config.max_scrapes {
+        if !take_scrape_budget(&mut scrape_attempts, config.max_scrapes) {
             break;
         }
         let Some(parsed_url) = public_http_url(&url) else {
@@ -188,6 +199,7 @@ fn discover_with_client(
         let data = match client.scrape(&url, config) {
             Ok(data) => {
                 batch.scrapes += 1;
+                batch.successful = true;
                 data
             }
             Err(error) => {
@@ -540,6 +552,7 @@ fn public_http_url(value: &str) -> Option<Url> {
                 || host.ends_with(".localhost")
                 || host.ends_with(".local")
                 || host.ends_with(".internal")
+                || looks_like_numeric_host(&host)
             {
                 return None;
             }
@@ -549,6 +562,21 @@ fn public_http_url(value: &str) -> Option<Url> {
         Host::Ipv4(_) | Host::Ipv6(_) => {}
     }
     Some(url)
+}
+
+fn looks_like_numeric_host(host: &str) -> bool {
+    host.as_bytes().first().is_some_and(u8::is_ascii_digit)
+        && host
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'.' | b'x' | b'a'..=b'f'))
+}
+
+fn take_scrape_budget(attempts: &mut usize, maximum: usize) -> bool {
+    if *attempts >= maximum {
+        return false;
+    }
+    *attempts += 1;
+    true
 }
 
 fn public_ipv4(address: Ipv4Addr) -> bool {
@@ -705,9 +733,21 @@ mod tests {
     fn public_url_guard_rejects_local_and_private_targets() {
         assert!(public_http_url("https://example.com/careers").is_some());
         assert!(public_http_url("http://127.0.0.1/jobs").is_none());
+        assert!(public_http_url("http://127.1/jobs").is_none());
+        assert!(public_http_url("http://2130706433/jobs").is_none());
+        assert!(public_http_url("http://0x7f000001/jobs").is_none());
         assert!(public_http_url("http://10.0.0.1/jobs").is_none());
         assert!(public_http_url("https://localhost/jobs").is_none());
         assert!(public_http_url("file:///tmp/jobs").is_none());
+    }
+
+    #[test]
+    fn scrape_attempt_budget_counts_failed_attempts() {
+        let mut attempts = 0;
+        assert!(take_scrape_budget(&mut attempts, 2));
+        assert!(take_scrape_budget(&mut attempts, 2));
+        assert!(!take_scrape_budget(&mut attempts, 2));
+        assert_eq!(attempts, 2);
     }
 
     #[test]

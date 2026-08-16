@@ -96,7 +96,7 @@ pub fn search(storage: &Storage, config_path: &Path, workers: usize) -> Result<P
                 firecrawl_searches = batch.searches;
                 firecrawl_scrapes = batch.scrapes;
                 firecrawl_interactions = batch.interactions;
-                if batch.searches > 0 || batch.scrapes > 0 {
+                if batch.successful {
                     successful_sources += 1;
                 }
                 jobs.extend(batch.jobs);

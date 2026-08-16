@@ -182,8 +182,12 @@ def discover(config: dict[str, Any]) -> list[Job]:
             batch = discover_firecrawl(config)
             collected.extend(batch.jobs)
             warnings.extend(f"firecrawl: {warning}" for warning in batch.warnings)
-            if batch.searches or batch.scrapes:
+            if batch.successful:
                 completed += 1
+            elif batch.searches or batch.scrapes or batch.warnings:
+                failures.append(
+                    "firecrawl: no search or scrape completed successfully"
+                )
             print(
                 "Firecrawl: "
                 f"searches={batch.searches}, scrapes={batch.scrapes}, "

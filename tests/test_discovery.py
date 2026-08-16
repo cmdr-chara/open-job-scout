@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import open_job_scout.discovery as discovery_module
 from open_job_scout.discovery import _plain_description, deduplicate, discover, row_to_job
 from open_job_scout.models import Job
 
@@ -198,3 +199,39 @@ def test_discovery_isolates_source_failures(monkeypatch) -> None:
 
     assert len(discover(settings)) == 1
     assert calls == ["linkedin", "google"]
+
+
+def test_failed_firecrawl_scrapes_do_not_count_as_completed_source(monkeypatch) -> None:
+    def fail(**_kwargs):
+        raise TimeoutError("source timed out")
+
+    monkeypatch.setitem(sys.modules, "jobspy", SimpleNamespace(scrape_jobs=fail))
+    monkeypatch.setattr(
+        discovery_module,
+        "settings_from_config",
+        lambda _config: SimpleNamespace(enabled=True),
+    )
+    monkeypatch.setattr(
+        discovery_module,
+        "discover_firecrawl",
+        lambda _config: SimpleNamespace(
+            jobs=[],
+            warnings=["scrape https://example.com/jobs/1: temporary failure"],
+            searches=1,
+            scrapes=0,
+            interactions=0,
+            successful=False,
+        ),
+    )
+    settings = {
+        "search": {
+            "terms": ["backend engineer"],
+            "sites": ["linkedin"],
+            "location": "Italy",
+            "results_per_term": 5,
+            "max_age_days": 7,
+        }
+    }
+
+    with pytest.raises(RuntimeError, match="All 2 configured searches failed"):
+        discover(settings)

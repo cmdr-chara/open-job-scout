@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import ipaddress
 import json
 import math
@@ -124,6 +125,10 @@ class FirecrawlBatch:
     scrapes: int = 0
     interactions: int = 0
     enabled: bool = False
+    # A source is complete only after an empty search or a successful scrape.
+    # Counters alone cannot distinguish a successful search followed by failed
+    # scrapes from a search that legitimately found no public targets.
+    successful: bool = False
 
 
 class FirecrawlTransport(Protocol):
@@ -167,7 +172,7 @@ class FirecrawlClient:
                     raise RuntimeError("Firecrawl response exceeded the allowed size")
         except urllib.error.HTTPError as exc:
             raise RuntimeError(f"Firecrawl returned HTTP {exc.code}") from exc
-        except (urllib.error.URLError, TimeoutError) as exc:
+        except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
             raise RuntimeError(f"Firecrawl request failed: {type(exc).__name__}") from exc
         try:
             decoded = json.loads(raw.decode("utf-8"))
@@ -370,19 +375,28 @@ def discover_firecrawl(
             except RuntimeError as exc:
                 batch.warnings.append(f"search {term!r}: {exc}")
                 continue
+            valid_targets = 0
             for result in results:
-                enqueue(result.get("url"))
+                result_url = result.get("url")
+                if isinstance(result_url, str) and _public_http_url(result_url):
+                    valid_targets += 1
+                    enqueue(result_url)
+            if valid_targets == 0:
+                batch.successful = True
 
-    while queue and batch.scrapes < settings.max_scrapes:
+    scrape_attempts = 0
+    while queue and scrape_attempts < settings.max_scrapes:
         url = queue.popleft()
         key = _url_key(url)
         queued.discard(key)
         if key in scraped:
             continue
         scraped.add(key)
+        scrape_attempts += 1
         try:
             data = client.scrape(url, settings)
             batch.scrapes += 1
+            batch.successful = True
         except RuntimeError as exc:
             batch.warnings.append(f"scrape {url}: {exc}")
             continue
@@ -506,8 +520,19 @@ def _public_http_url(value: object) -> bool:
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
-        return True
+        # Python's ipaddress module intentionally accepts only canonical
+        # textual addresses. URL clients and resolvers may still interpret
+        # legacy numeric IPv4 forms such as 127.1, 2130706433, or
+        # 0x7f000001 as localhost. Reject those only when they did not parse
+        # as a canonical IP, while preserving public literal IPv4 addresses.
+        return not _looks_like_numeric_host(host)
     return address.is_global
+
+
+def _looks_like_numeric_host(host: str) -> bool:
+    return bool(host) and host[0] in "0123456789" and all(
+        character.isdigit() or character in ".xabcdef" for character in host
+    )
 
 
 def _valid_domain(value: str) -> bool:
