@@ -2,12 +2,16 @@ mod app;
 mod config;
 mod diagnostics;
 mod exporting;
+mod identity;
+mod importing;
 mod model;
 mod ranking;
+mod reporting;
 mod storage;
 mod theme;
 mod ui;
 mod verification;
+mod workflows;
 
 use std::{io, path::PathBuf, process::Command as ProcessCommand, time::Duration};
 
@@ -78,6 +82,21 @@ enum Commands {
         #[arg(long, default_value_t = 25)]
         limit: usize,
     },
+    /// Import a JobSpy-compatible CSV through filtering, verification, ranking, and tracking.
+    ImportCsv {
+        path: PathBuf,
+        #[arg(long)]
+        no_verify: bool,
+        #[arg(long, default_value_t = 6)]
+        workers: usize,
+    },
+    /// Write a Markdown report from the current tracker.
+    Report {
+        #[arg(long)]
+        output: Option<PathBuf>,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
     /// Recompute transparent ranking/filter diagnostics without network access.
     Rerank,
     /// Re-verify tracked links and rerank without changing discovery timestamps.
@@ -132,6 +151,16 @@ fn main() -> Result<()> {
             Ok(())
         }
         Commands::History { id, limit } => command_history(&storage, &id, limit),
+        Commands::ImportCsv {
+            path,
+            no_verify,
+            workers,
+        } => workflows::import_csv(&storage, &config_path, &path, !no_verify, workers).map(|_| ()),
+        Commands::Report { output, limit } => {
+            let report = workflows::report(&storage, output.as_deref(), limit)?;
+            println!("Report: {}", report.display());
+            Ok(())
+        }
         Commands::Rerank => command_rerank(&storage, &config_path),
         Commands::Recheck { workers } => command_recheck(&storage, &config_path, workers),
         Commands::Stats => command_stats(&storage),
