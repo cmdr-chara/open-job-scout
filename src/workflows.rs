@@ -9,6 +9,7 @@ use time::{OffsetDateTime, format_description};
 use crate::{
     config::{expand_path, load_config},
     importing, migration, ranking, reporting,
+    safety::terminal_text,
     storage::Storage,
     verification,
 };
@@ -76,7 +77,7 @@ pub fn import_csv(
     println!("Rejected by filters: {rejected}");
     println!("Stored: {stored}");
     println!("Marked stale: {stale}");
-    println!("Report: {}", output.display());
+    println!("Report: {}", terminal_text(&output.display().to_string()));
     Ok(output)
 }
 

@@ -106,7 +106,7 @@ impl Ats {
 }
 
 #[derive(Debug)]
-enum FetchError {
+pub(crate) enum FetchError {
     Unsafe(String),
     Transport(String),
     Http(u16),
@@ -385,6 +385,10 @@ fn request_json(mut current: Url, timeout_seconds: u64) -> Result<Value, FetchEr
     Err(FetchError::Invalid("too many redirects".into()))
 }
 
+pub(crate) fn request_json_for_provider(url: Url) -> Result<Value, FetchError> {
+    request_json(url, 20)
+}
+
 #[cfg(test)]
 fn validate_target(value: &str) -> Result<ValidatedTarget, FetchError> {
     let parsed = Url::parse(value).map_err(|error| FetchError::Unsafe(error.to_string()))?;
@@ -473,6 +477,9 @@ fn is_public_ip(address: IpAddr) -> bool {
                     && segments[1] == 0
                     && segments[2] == 0
                     && segments[3] == 0)
+                // Reject the well-known NAT64 prefix. Otherwise a translated
+                // private IPv4 destination could pass the IPv6 classifier.
+                || (segments[0] == 0x0064 && segments[1] == 0xff9b)
             {
                 return false;
             }
@@ -954,6 +961,7 @@ mod tests {
             "http://[fd00::1]/",
             "http://[fe80::1]/",
             "http://[2001:db8::1]/",
+            "http://[64:ff9b::c000:0201]/",
         ] {
             assert!(!is_safe_public_url(value), "{value} should be rejected");
         }

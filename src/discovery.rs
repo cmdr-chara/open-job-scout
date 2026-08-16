@@ -9,6 +9,7 @@ use time::{OffsetDateTime, format_description};
 use crate::{
     config::{expand_path, load_config},
     importing, migration, providers, ranking, reporting,
+    safety::terminal_text,
     storage::Storage,
     verification,
 };
@@ -76,9 +77,9 @@ pub fn search(storage: &Storage, config_path: &Path, workers: usize) -> Result<P
     println!("Stored: {stored}");
     println!("Marked stale: {stale}");
     for error in &batch.errors {
-        eprintln!("Provider warning: {error}");
+        eprintln!("Provider warning: {}", terminal_text(error));
     }
-    println!("Report: {}", output.display());
+    println!("Report: {}", terminal_text(&output.display().to_string()));
     Ok(output)
 }
 

@@ -6,13 +6,21 @@ use std::{
 use anyhow::{Context, Result};
 use regex::Regex;
 use time::{OffsetDateTime, format_description};
+use url::Url;
 
-use crate::model::Job;
+use crate::{
+    model::Job,
+    safety::{safe_http_url, secure_private_directory, secure_private_file},
+};
 
 pub fn write_markdown(jobs: &[Job], output: &Path) -> Result<PathBuf> {
     if let Some(parent) = output.parent().filter(|path| !path.as_os_str().is_empty()) {
+        let was_missing = !parent.exists();
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
+        if was_missing {
+            secure_private_directory(parent)?;
+        }
     }
     let timestamp = OffsetDateTime::now_local()
         .unwrap_or_else(|_| OffsetDateTime::now_utc())
@@ -115,6 +123,7 @@ pub fn write_markdown(jobs: &[Job], output: &Path) -> Result<PathBuf> {
     }
     fs::write(output, lines.join("\n"))
         .with_context(|| format!("failed to write {}", output.display()))?;
+    secure_private_file(output)?;
     Ok(output.to_path_buf())
 }
 
@@ -139,7 +148,12 @@ fn nonempty_inline(value: &str) -> Option<String> {
 }
 
 fn safe_url(value: &str) -> String {
-    value.replace('<', "%3C").replace('>', "%3E")
+    let Some(value) = safe_http_url(value) else {
+        return "#".into();
+    };
+    Url::parse(&value)
+        .map(|url| url.to_string().replace('<', "%3C").replace('>', "%3E"))
+        .unwrap_or_else(|_| "#".into())
 }
 
 fn amount(value: Option<f64>) -> String {
@@ -193,6 +207,23 @@ mod tests {
         assert!(report.contains("OpenJobScout report"));
         assert!(report.contains("Verification:"));
         assert!(report.contains("Reasons:"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn report_does_not_emit_unsafe_link_schemes() {
+        let mut job = demo_jobs().remove(0);
+        job.source_url = "javascript:alert(1)".into();
+        job.canonical_url = None;
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("openjobscout-unsafe-report-{unique}.md"));
+        write_markdown(&[job], &path).unwrap();
+        let report = fs::read_to_string(&path).unwrap();
+        assert!(report.contains("- URL: <#>"));
+        assert!(!report.contains("javascript:"));
         let _ = fs::remove_file(path);
     }
 }

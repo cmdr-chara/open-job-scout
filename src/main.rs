@@ -10,18 +10,14 @@ mod model;
 mod providers;
 mod ranking;
 mod reporting;
+mod safety;
 mod storage;
 mod theme;
 mod ui;
 mod verification;
 mod workflows;
 
-use std::{
-    io,
-    path::{Path, PathBuf},
-    process::Command as ProcessCommand,
-    time::Duration,
-};
+use std::{io, path::PathBuf, process::Command as ProcessCommand, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use app::App;
@@ -38,6 +34,7 @@ use crossterm::{
 };
 use model::{ApplicationStatus, Job};
 use ratatui::{Terminal, backend::CrosstermBackend};
+use safety::{safe_http_url, terminal_text};
 use storage::Storage;
 
 #[derive(Debug, Parser)]
@@ -79,7 +76,11 @@ enum Commands {
         limit: usize,
     },
     /// Show one tracked job by a unique fingerprint prefix.
-    Show { id: String },
+    Show {
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// Mark a job with a tracker status.
     Mark {
         id: String,
@@ -94,6 +95,8 @@ enum Commands {
         id: String,
         #[arg(long, default_value_t = 25)]
         limit: usize,
+        #[arg(long)]
+        json: bool,
     },
     /// Import a JobSpy-compatible CSV through filtering, verification, ranking, and tracking.
     ImportCsv {
@@ -121,14 +124,19 @@ enum Commands {
     Stats,
     /// Export the tracker in Python-compatible JSON or CSV fields.
     Export {
-        output: PathBuf,
+        output: Option<PathBuf>,
+        #[arg(long = "output", value_name = "PATH", conflicts_with = "output")]
+        output_path: Option<PathBuf>,
         #[arg(long, default_value = "json")]
         format: String,
         #[arg(long)]
         status: Option<ApplicationStatus>,
     },
     /// Inspect config/database health without mutating tracker data.
-    Doctor,
+    Doctor {
+        #[arg(long)]
+        json: bool,
+    },
     /// Mark automatically-managed jobs stale after N unseen days.
     Stale {
         #[arg(long, default_value_t = 30)]
@@ -140,8 +148,8 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let config_path = selected_config_path(cli.config.as_deref())?;
     let database = resolve_database_path(cli.database.as_deref(), cli.config.as_deref())?;
-    if matches!(cli.command, Some(Commands::Doctor)) {
-        return command_doctor(&config_path, &database);
+    if let Some(Commands::Doctor { json }) = cli.command.as_ref() {
+        return command_doctor(&config_path, &database, *json);
     }
 
     let storage = Storage::open(database)?;
@@ -155,18 +163,18 @@ fn main() -> Result<()> {
             query,
             limit,
         } => command_list(&storage, status, query.as_deref(), limit),
-        Commands::Show { id } => command_show(&storage, &id),
+        Commands::Show { id, json } => command_show(&storage, &id, json),
         Commands::Mark { id, status, note } => {
             storage.mark_job(&id, status, note.as_deref())?;
-            println!("{} → {}", id, status.label());
+            println!("{} → {}", terminal_text(&id), status.label());
             Ok(())
         }
         Commands::Note { id, text } => {
             storage.add_note(&id, &text)?;
-            println!("note saved for {id}");
+            println!("note saved for {}", terminal_text(&id));
             Ok(())
         }
-        Commands::History { id, limit } => command_history(&storage, &id, limit),
+        Commands::History { id, limit, json } => command_history(&storage, &id, limit, json),
         Commands::ImportCsv {
             path,
             no_verify,
@@ -174,7 +182,7 @@ fn main() -> Result<()> {
         } => workflows::import_csv(&storage, &config_path, &path, !no_verify, workers).map(|_| ()),
         Commands::Report { output, limit } => {
             let report = workflows::report(&storage, output.as_deref(), limit)?;
-            println!("Report: {}", report.display());
+            println!("Report: {}", terminal_text(&report.display().to_string()));
             Ok(())
         }
         Commands::Rerank => command_rerank(&storage, &config_path),
@@ -182,15 +190,21 @@ fn main() -> Result<()> {
         Commands::Stats => command_stats(&storage),
         Commands::Export {
             output,
+            output_path,
             format,
             status,
-        } => command_export(&storage, &output, &format, status),
+        } => {
+            let Some(output) = output_path.or(output) else {
+                bail!("export requires an output path (use OUTPUT or --output PATH)");
+            };
+            command_export(&storage, &output, &format, status)
+        }
         Commands::Stale { days } => {
             let changed = storage.mark_stale_jobs(days)?;
             println!("marked {changed} job(s) stale");
             Ok(())
         }
-        Commands::Doctor => unreachable!("doctor is handled before opening storage"),
+        Commands::Doctor { .. } => unreachable!("doctor is handled before opening storage"),
     }
 }
 
@@ -223,42 +237,63 @@ fn command_list(
             job.short_id(),
             job.score,
             job.status.as_str(),
-            job.title,
-            job.company
+            terminal_text(&job.title),
+            terminal_text(&job.company)
         );
     }
     Ok(())
 }
 
-fn command_show(storage: &Storage, id: &str) -> Result<()> {
+fn command_show(storage: &Storage, id: &str, json: bool) -> Result<()> {
     let job = storage.find_job(id)?;
-    print_job(&job);
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&exporting::job_json(&job))?
+        );
+    } else {
+        print_job(&job);
+    }
     Ok(())
 }
 
-fn command_history(storage: &Storage, id: &str, limit: usize) -> Result<()> {
+fn command_history(storage: &Storage, id: &str, limit: usize, json: bool) -> Result<()> {
     let job = storage.find_job(id)?;
-    println!("{} — {} ({})", job.title, job.company, job.short_id());
     let events = storage.events(id, limit)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&events)?);
+        return Ok(());
+    }
+    println!(
+        "{} — {} ({})",
+        terminal_text(&job.title),
+        terminal_text(&job.company),
+        job.short_id()
+    );
     if events.is_empty() {
         println!("No history events recorded.");
         return Ok(());
     }
     for event in events {
         let transition = match (event.old_value.as_deref(), event.new_value.as_deref()) {
-            (Some(old), Some(new)) => format!(" {old} → {new}"),
-            (_, Some(new)) => format!(" {new}"),
+            (Some(old), Some(new)) => {
+                format!(" {} → {}", terminal_text(old), terminal_text(new))
+            }
+            (_, Some(new)) => format!(" {}", terminal_text(new)),
             _ => String::new(),
         };
         let note = event
             .note
             .as_deref()
             .filter(|note| !note.is_empty())
-            .map(|note| format!(" · {note}"))
+            .map(|note| format!(" · {}", terminal_text(note)))
             .unwrap_or_default();
         println!(
             "{}  {:<12}{}{}",
-            event.created_at, event.event_type, transition, note
+            terminal_text(&event.created_at),
+            terminal_text(&event.event_type),
+            transition,
+            note
         );
     }
     Ok(())
@@ -266,7 +301,10 @@ fn command_history(storage: &Storage, id: &str, limit: usize) -> Result<()> {
 
 fn command_rerank(storage: &Storage, config_path: &std::path::Path) -> Result<()> {
     let config = load_config(config_path)?;
-    println!("Configured search location: {}", config.search.location);
+    println!(
+        "Configured search location: {}",
+        terminal_text(&config.search.location)
+    );
     let mut jobs = storage.load_jobs()?;
     let mut pass_filters = 0;
     for job in &mut jobs {
@@ -342,22 +380,33 @@ fn command_export(
         .filter(|job| status.is_none_or(|status| job.status == status))
         .collect::<Vec<_>>();
     exporting::export_jobs(&jobs, output, &format.to_ascii_lowercase())?;
-    println!("exported {} job(s) to {}", jobs.len(), output.display());
+    println!(
+        "exported {} job(s) to {}",
+        jobs.len(),
+        terminal_text(&output.display().to_string())
+    );
     Ok(())
 }
 
-fn command_doctor(config_path: &std::path::Path, database_path: &std::path::Path) -> Result<()> {
+fn command_doctor(
+    config_path: &std::path::Path,
+    database_path: &std::path::Path,
+    json: bool,
+) -> Result<()> {
     let checks = diagnostics::run(config_path, database_path);
-    let mut failed = false;
-    for check in checks {
-        println!(
-            "{:<5} {:<22} {}",
-            check.level.to_uppercase(),
-            check.check,
-            check.message
-        );
-        failed |= check.level == "error";
+    if json {
+        println!("{}", serde_json::to_string_pretty(&checks)?);
+    } else {
+        for check in &checks {
+            println!(
+                "{:<5} {:<22} {}",
+                check.level.to_uppercase(),
+                terminal_text(check.check),
+                terminal_text(&check.message)
+            );
+        }
     }
+    let failed = checks.iter().any(|check| check.level == "error");
     if failed {
         bail!("one or more diagnostics failed");
     }
@@ -365,25 +414,29 @@ fn command_doctor(config_path: &std::path::Path, database_path: &std::path::Path
 }
 
 fn print_job(job: &Job) {
-    println!("{} — {}", job.title, job.company);
+    println!(
+        "{} — {}",
+        terminal_text(&job.title),
+        terminal_text(&job.company)
+    );
     println!("ID:           {}", job.short_id());
     println!("Score:        {:.1}/100", job.score);
     println!("Status:       {}", job.status.as_str());
     println!("Work mode:    {}", job.work_mode.as_str());
-    println!("Verification: {}", job.verification);
+    println!("Verification: {}", terminal_text(&job.verification));
     if let Some(source) = job
         .verification_source
         .as_deref()
         .filter(|value| !value.is_empty())
     {
-        println!("Verified via: {source}");
+        println!("Verified via: {}", terminal_text(source));
     }
     println!("Location:     {}", fallback(&job.location));
     println!(
         "Employment:   {}",
-        job.employment_type.as_deref().unwrap_or("not provided")
+        terminal_text(job.employment_type.as_deref().unwrap_or("not provided"))
     );
-    println!("Salary:       {}", job.salary_label());
+    println!("Salary:       {}", terminal_text(&job.salary_label()));
     println!("Posted:       {}", fallback(&job.posted));
     println!("Source:       {}", fallback(&job.source));
     println!("First seen:   {}", fallback(&job.first_seen));
@@ -393,7 +446,7 @@ fn print_job(job: &Job) {
         .as_deref()
         .filter(|value| !value.is_empty())
     {
-        println!("Status at:    {updated}");
+        println!("Status at:    {}", terminal_text(updated));
     }
     println!("URL:          {}", fallback(job.preferred_url()));
     if let Some(url) = job
@@ -406,8 +459,8 @@ fn print_job(job: &Job) {
             .as_deref()
             .filter(|value| !value.is_empty())
             .unwrap_or("Suggested replacement");
-        println!("Replacement:  {title}");
-        println!("               {url}");
+        println!("Replacement:  {}", terminal_text(title));
+        println!("               {}", terminal_text(url));
     }
     println!();
     println!("Why it ranked:");
@@ -415,7 +468,7 @@ fn print_job(job: &Job) {
         println!("  none recorded");
     } else {
         for reason in &job.reasons {
-            println!("  + {reason}");
+            println!("  + {}", terminal_text(reason));
         }
     }
     println!();
@@ -424,14 +477,14 @@ fn print_job(job: &Job) {
         println!("  none recorded");
     } else {
         for concern in &job.concerns {
-            println!("  - {concern}");
+            println!("  - {}", terminal_text(concern));
         }
     }
     if !job.notes.trim().is_empty() {
         println!();
         println!("Notes:");
         for line in job.notes.lines() {
-            println!("  {line}");
+            println!("  {}", terminal_text(line));
         }
     }
     println!();
@@ -439,11 +492,11 @@ fn print_job(job: &Job) {
     println!("{}", fallback(&job.description));
 }
 
-fn fallback(value: &str) -> &str {
+fn fallback(value: &str) -> String {
     if value.trim().is_empty() {
-        "not provided"
+        "not provided".into()
     } else {
-        value
+        terminal_text(value)
     }
 }
 
@@ -515,25 +568,23 @@ fn run_event_loop(
 }
 
 fn open_in_browser(url: &str) -> Result<()> {
-    if !(url.starts_with("https://") || url.starts_with("http://")) {
-        bail!("refusing to open a non-HTTP URL");
-    }
+    let url = safe_http_url(url).context("refusing to open an unsafe URL")?;
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut command = ProcessCommand::new("cmd");
-        command.args(["/C", "start", "", url]);
+        let mut command = ProcessCommand::new("explorer.exe");
+        command.arg(&url);
         command
     };
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut command = ProcessCommand::new("open");
-        command.arg(url);
+        command.arg(&url);
         command
     };
     #[cfg(all(unix, not(target_os = "macos")))]
     let mut command = {
         let mut command = ProcessCommand::new("xdg-open");
-        command.arg(url);
+        command.arg(&url);
         command
     };
     command
@@ -585,8 +636,24 @@ mod tests {
         let export =
             Cli::try_parse_from(["jobscout", "export", "jobs.json", "--status", "new"]).unwrap();
         assert!(matches!(export.command, Some(Commands::Export { .. })));
-        let doctor = Cli::try_parse_from(["jobscout", "doctor"]).unwrap();
-        assert!(matches!(doctor.command, Some(Commands::Doctor)));
+        let export_flag =
+            Cli::try_parse_from(["jobscout", "export", "--output", "jobs.json"]).unwrap();
+        assert!(matches!(export_flag.command, Some(Commands::Export { .. })));
+        let show = Cli::try_parse_from(["jobscout", "show", "abc123", "--json"]).unwrap();
+        assert!(matches!(
+            show.command,
+            Some(Commands::Show { json: true, .. })
+        ));
+        let history = Cli::try_parse_from(["jobscout", "history", "abc123", "--json"]).unwrap();
+        assert!(matches!(
+            history.command,
+            Some(Commands::History { json: true, .. })
+        ));
+        let doctor = Cli::try_parse_from(["jobscout", "doctor", "--json"]).unwrap();
+        assert!(matches!(
+            doctor.command,
+            Some(Commands::Doctor { json: true })
+        ));
     }
 
     #[test]

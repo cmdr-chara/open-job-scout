@@ -4,11 +4,9 @@ use std::{
     path::Path,
     sync::{Arc, Mutex, mpsc},
     thread,
-    time::Duration,
 };
 
 use anyhow::{Context, Result, bail};
-use reqwest::blocking::Client;
 use scraper::Html;
 use serde::Deserialize;
 use serde_json::Value;
@@ -20,9 +18,11 @@ use crate::{
     identity::job_fingerprint,
     model::{ApplicationStatus, Job, WorkMode},
     ranking::{contains_term, normalize_text},
+    verification::request_json_for_provider,
 };
 
-const USER_AGENT: &str = "OpenJobScout/0.2 (+https://github.com/cmdr-chara/open-job-scout)";
+const MAX_PROVIDER_JOBS: usize = 5_000;
+const MAX_PROVIDER_TEXT_CHARS: usize = 100_000;
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ProvidersConfig {
@@ -209,26 +209,8 @@ fn fetch_task(task: &ProviderTask) -> Result<Vec<Job>> {
     }
 }
 
-fn client() -> Result<Client> {
-    Ok(Client::builder()
-        .no_proxy()
-        .timeout(Duration::from_secs(20))
-        .connect_timeout(Duration::from_secs(10))
-        .user_agent(USER_AGENT)
-        .build()?)
-}
-
 fn get_json(url: Url) -> Result<Value> {
-    let response = client()?.get(url.clone()).send()?;
-    let status = response.status();
-    if !status.is_success() {
-        bail!(
-            "{} returned HTTP {}",
-            url.host_str().unwrap_or("provider"),
-            status.as_u16()
-        );
-    }
-    Ok(response.json()?)
+    Ok(request_json_for_provider(url)?)
 }
 
 fn fetch_greenhouse(board: &str) -> Result<Vec<Job>> {
@@ -246,6 +228,7 @@ fn fetch_greenhouse(board: &str) -> Result<Vec<Job>> {
         .context("Greenhouse response did not contain jobs[]")?;
     Ok(jobs
         .iter()
+        .take(MAX_PROVIDER_JOBS)
         .filter_map(|value| map_greenhouse(value, board))
         .collect())
 }
@@ -289,6 +272,7 @@ fn fetch_lever(site: &str, eu: bool) -> Result<Vec<Job>> {
         .context("Lever response was not an array")?;
     Ok(jobs
         .iter()
+        .take(MAX_PROVIDER_JOBS)
         .filter_map(|value| map_lever(value, site))
         .collect())
 }
@@ -345,6 +329,7 @@ fn fetch_ashby(board: &str) -> Result<Vec<Job>> {
         .context("Ashby response did not contain jobs[]")?;
     Ok(jobs
         .iter()
+        .take(MAX_PROVIDER_JOBS)
         .filter_map(|value| map_ashby(value, board))
         .collect())
 }
@@ -391,6 +376,7 @@ fn fetch_recruitee(company: &str) -> Result<Vec<Job>> {
         .context("Recruitee response did not contain offers[]")?;
     Ok(offers
         .iter()
+        .take(MAX_PROVIDER_JOBS)
         .filter_map(|value| map_recruitee(value, company))
         .collect())
 }
@@ -499,6 +485,9 @@ fn plain_html(value: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+        .chars()
+        .take(MAX_PROVIDER_TEXT_CHARS)
+        .collect()
 }
 
 fn text_field(value: &Value, field: &str) -> Option<String> {
@@ -507,7 +496,10 @@ fn text_field(value: &Value, field: &str) -> Option<String> {
 
 fn value_text(value: &Value) -> Option<String> {
     match value {
-        Value::String(value) if !value.trim().is_empty() => Some(value.trim().to_string()),
+        Value::String(value) if !value.trim().is_empty() => {
+            let value = value.trim();
+            (value.chars().count() <= MAX_PROVIDER_TEXT_CHARS).then(|| value.to_string())
+        }
         Value::Number(value) => Some(value.to_string()),
         _ => None,
     }

@@ -9,6 +9,7 @@ dist/
 build/
 *.egg-info/
 .e2e/
+target/
 
 # OpenJobScout keeps personal job-search data local.
 .openjobscout/

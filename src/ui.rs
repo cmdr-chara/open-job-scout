@@ -11,6 +11,7 @@ use ratatui::{
 use crate::{
     app::{App, InputMode, Tab},
     model::{ApplicationStatus, Job, JobEvent},
+    safety::terminal_text,
     theme,
 };
 
@@ -115,7 +116,7 @@ fn render_job_list(frame: &mut Frame<'_>, app: &App, area: Rect) {
         format!(
             " {} · /{} ",
             app.active_tab.label().to_uppercase(),
-            app.search_query
+            terminal_text(&app.search_query)
         )
     };
     let block = panel(title, true);
@@ -166,13 +167,13 @@ fn job_list_item(job: &Job) -> ListItem<'_> {
         ),
         Span::raw("  "),
         Span::styled(
-            job.title.clone(),
+            terminal_text(&job.title),
             Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD),
         ),
     ]);
     let second = Line::from(vec![
         Span::raw("     "),
-        Span::styled(job.company.clone(), Style::new().fg(theme::MUTED)),
+        Span::styled(terminal_text(&job.company), Style::new().fg(theme::MUTED)),
         Span::styled("  ·  ", Style::new().fg(theme::FAINT)),
         Span::styled(job.work_mode.label(), Style::new().fg(theme::MUTED)),
         Span::styled("  ·  ", Style::new().fg(theme::FAINT)),
@@ -206,19 +207,19 @@ fn render_job_detail(frame: &mut Frame<'_>, job: Option<&Job>, area: Rect) {
     .margin(1)
     .split(inner);
 
-    let salary = job.salary_label();
+    let salary = terminal_text(&job.salary_label());
     let header = Paragraph::new(Text::from(vec![
         Line::from(Span::styled(
-            job.title.clone(),
+            terminal_text(&job.title),
             Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
-            job.company.clone(),
+            terminal_text(&job.company),
             Style::new().fg(theme::ACCENT),
         )),
         Line::from(""),
         Line::from(vec![
-            Span::styled(job.location.clone(), Style::new().fg(theme::MUTED)),
+            Span::styled(terminal_text(&job.location), Style::new().fg(theme::MUTED)),
             Span::styled("  •  ", Style::new().fg(theme::FAINT)),
             Span::styled(salary, Style::new().fg(theme::GREEN)),
         ]),
@@ -239,11 +240,11 @@ fn render_job_detail(frame: &mut Frame<'_>, job: Option<&Job>, area: Rect) {
         status_badge(job.status),
         Span::raw("   "),
         Span::styled(
-            job.verification.clone(),
+            terminal_text(&job.verification),
             verification_style(&job.verification),
         ),
         Span::styled(" via ", Style::new().fg(theme::FAINT)),
-        Span::styled(job.source.clone(), Style::new().fg(theme::MUTED)),
+        Span::styled(terminal_text(&job.source), Style::new().fg(theme::MUTED)),
         Span::styled("   ·   ", Style::new().fg(theme::FAINT)),
         Span::styled(job.short_id().to_string(), Style::new().fg(theme::FAINT)),
     ]));
@@ -254,7 +255,7 @@ fn render_job_detail(frame: &mut Frame<'_>, job: Option<&Job>, area: Rect) {
     } else {
         job.reasons
             .iter()
-            .map(|reason| format!("+ {reason}"))
+            .map(|reason| format!("+ {}", terminal_text(reason)))
             .collect::<Vec<_>>()
             .join("   ")
     };
@@ -263,7 +264,7 @@ fn render_job_detail(frame: &mut Frame<'_>, job: Option<&Job>, area: Rect) {
     } else {
         job.concerns
             .iter()
-            .map(|concern| format!("⚠ {concern}"))
+            .map(|concern| format!("⚠ {}", terminal_text(concern)))
             .collect::<Vec<_>>()
             .join("   ")
     };
@@ -275,20 +276,20 @@ fn render_job_detail(frame: &mut Frame<'_>, job: Option<&Job>, area: Rect) {
         Line::from(Span::styled(concerns, Style::new().fg(theme::RED))),
         Line::from(""),
         Line::from(Span::styled("ABOUT THE ROLE", theme::accent())),
-        Line::from(job.description.clone()),
+        Line::from(terminal_text(&job.description)),
     ];
     if !job.notes.trim().is_empty() {
         lines.extend([
             Line::from(""),
             Line::from(Span::styled("NOTES", theme::accent())),
-            Line::from(job.notes.clone()),
+            Line::from(terminal_text(&job.notes)),
         ]);
     }
     lines.extend([
         Line::from(""),
         Line::from(Span::styled("LISTING", theme::accent())),
         Line::from(Span::styled(
-            job.preferred_url().to_string(),
+            terminal_text(job.preferred_url()),
             Style::new().fg(theme::MUTED),
         )),
     ]);
@@ -334,11 +335,11 @@ fn render_footer(frame: &mut Frame<'_>, app: &App, area: Rect) {
         chunks[0],
     );
     frame.render_widget(
-        Paragraph::new(
+        Paragraph::new(terminal_text(
             app.notice
                 .as_deref()
                 .unwrap_or("Local-first · SQLite-backed · no account required"),
-        )
+        ))
         .style(Style::new().fg(theme::FAINT))
         .alignment(Alignment::Right),
         chunks[1],
@@ -368,7 +369,7 @@ fn render_text_input(
         Line::from(vec![
             Span::styled(prefix, Style::new().fg(theme::ACCENT)),
             Span::styled(
-                value.to_string(),
+                terminal_text(value),
                 Style::new().fg(theme::TEXT).add_modifier(Modifier::BOLD),
             ),
             Span::styled("▌", Style::new().fg(theme::ACCENT)),
@@ -385,7 +386,13 @@ fn render_history(frame: &mut Frame<'_>, app: &App, area: Rect) {
     let mut lines = vec![
         Line::from(Span::styled(
             app.selected_job()
-                .map(|job| format!("{} · {}", job.title, job.company))
+                .map(|job| {
+                    format!(
+                        "{} · {}",
+                        terminal_text(&job.title),
+                        terminal_text(&job.company)
+                    )
+                })
                 .unwrap_or_else(|| "Job history".into()),
             theme::heading(),
         )),
@@ -413,15 +420,20 @@ fn render_history(frame: &mut Frame<'_>, app: &App, area: Rect) {
 
 fn history_lines(event: &JobEvent) -> Vec<Line<'static>> {
     let transition = match (&event.old_value, &event.new_value) {
-        (Some(old), Some(new)) => format!("{old} → {new}"),
-        (_, Some(new)) => new.clone(),
+        (Some(old), Some(new)) => {
+            format!("{} → {}", terminal_text(old), terminal_text(new))
+        }
+        (_, Some(new)) => terminal_text(new),
         _ => String::new(),
     };
     let mut line = vec![
-        Span::styled(event.created_at.clone(), Style::new().fg(theme::FAINT)),
+        Span::styled(
+            terminal_text(&event.created_at),
+            Style::new().fg(theme::FAINT),
+        ),
         Span::raw("  "),
         Span::styled(
-            event.event_type.to_uppercase(),
+            terminal_text(&event.event_type.to_uppercase()),
             Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
         ),
     ];
@@ -432,7 +444,7 @@ fn history_lines(event: &JobEvent) -> Vec<Line<'static>> {
     let mut lines = vec![Line::from(line)];
     if let Some(note) = event.note.as_deref().filter(|note| !note.is_empty()) {
         lines.push(Line::from(Span::styled(
-            format!("    {note}"),
+            format!("    {}", terminal_text(note)),
             theme::muted(),
         )));
     }
