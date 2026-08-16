@@ -214,6 +214,7 @@ fn command_history(storage: &Storage, id: &str, limit: usize) -> Result<()> {
 
 fn command_rerank(storage: &Storage, config_path: &std::path::Path) -> Result<()> {
     let config = load_config(config_path)?;
+    println!("Configured search location: {}", config.search.location);
     let mut jobs = storage.load_jobs()?;
     let mut pass_filters = 0;
     for job in &mut jobs {
