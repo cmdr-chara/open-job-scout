@@ -1,15 +1,23 @@
-use std::{collections::HashMap, fs, path::Path, sync::OnceLock};
+use std::{
+    collections::HashMap,
+    fs,
+    path::Path,
+    sync::OnceLock,
+    time::Duration as StdDuration,
+};
 
 use anyhow::{Context, Result};
 use csv::{ReaderBuilder, StringRecord};
 use regex::Regex;
+use rusqlite::{Connection, OptionalExtension, params};
 use scraper::Html;
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use url::Url;
 
 use crate::{
     identity::{job_dedup_key, job_fingerprint},
     model::{ApplicationStatus, Job, WorkMode},
-    ranking::normalize_text,
+    storage::Storage,
 };
 
 const MISSING_VALUES: &[&str] = &["", "<na>", "na", "nan", "nat", "none", "null"];
@@ -50,13 +58,169 @@ pub fn deduplicate(jobs: Vec<Job>) -> Vec<Job> {
     unique
 }
 
+pub fn save_jobs(storage: &Storage, jobs: &[Job]) -> Result<usize> {
+    let mut connection = Connection::open(storage.path())
+        .with_context(|| format!("failed to open {}", storage.path().display()))?;
+    connection.busy_timeout(StdDuration::from_secs(5))?;
+    connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;")?;
+    let transaction = connection.transaction()?;
+    let now = OffsetDateTime::now_utc().format(&Rfc3339)?;
+    let mut count = 0;
+
+    for job in jobs {
+        let before: Option<(String, String)> = transaction
+            .query_row(
+                "SELECT status, verification_status FROM jobs WHERE fingerprint=?",
+                [&job.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let remote = job.remote.map(i64::from);
+        let reasons = serde_json::to_string(&job.reasons)?;
+        let concerns = serde_json::to_string(&job.concerns)?;
+        let initial_status = if job.verification == "closed" {
+            "closed"
+        } else {
+            "new"
+        };
+
+        transaction.execute(
+            "INSERT INTO jobs (
+                fingerprint,title,company,location,remote,work_mode,employment_type,
+                salary_min,salary_max,currency,salary_source,description,posted_at,
+                source,source_url,canonical_url,score,reasons,concerns,
+                verification_status,verification_source,replacement_url,replacement_title,
+                first_seen_at,last_seen_at,status,status_manually_set
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(fingerprint) DO UPDATE SET
+                title=excluded.title,
+                company=excluded.company,
+                location=excluded.location,
+                remote=excluded.remote,
+                work_mode=excluded.work_mode,
+                employment_type=excluded.employment_type,
+                salary_min=COALESCE(excluded.salary_min,jobs.salary_min),
+                salary_max=COALESCE(excluded.salary_max,jobs.salary_max),
+                currency=COALESCE(excluded.currency,jobs.currency),
+                salary_source=COALESCE(excluded.salary_source,jobs.salary_source),
+                description=excluded.description,
+                posted_at=excluded.posted_at,
+                source=excluded.source,
+                source_url=excluded.source_url,
+                canonical_url=COALESCE(excluded.canonical_url,jobs.canonical_url),
+                score=excluded.score,
+                reasons=excluded.reasons,
+                concerns=excluded.concerns,
+                verification_status=excluded.verification_status,
+                verification_source=excluded.verification_source,
+                replacement_url=excluded.replacement_url,
+                replacement_title=excluded.replacement_title,
+                last_seen_at=excluded.last_seen_at,
+                status=CASE
+                    WHEN jobs.status_manually_set=1 THEN jobs.status
+                    WHEN excluded.verification_status='closed' THEN 'closed'
+                    WHEN jobs.status IN ('closed','stale') THEN 'new'
+                    ELSE jobs.status
+                END,
+                status_updated_at=CASE
+                    WHEN jobs.status_manually_set=1 THEN jobs.status_updated_at
+                    WHEN excluded.verification_status='closed' AND jobs.status<>'closed'
+                    THEN excluded.last_seen_at
+                    WHEN excluded.verification_status<>'closed'
+                         AND jobs.status IN ('closed','stale')
+                    THEN excluded.last_seen_at
+                    ELSE jobs.status_updated_at
+                END",
+            params![
+                &job.id,
+                &job.title,
+                &job.company,
+                &job.location,
+                remote,
+                job.work_mode.as_str(),
+                job.employment_type.as_deref(),
+                job.salary_min,
+                job.salary_max,
+                job.currency.as_deref(),
+                job.salary_source.as_deref(),
+                &job.description,
+                &job.posted,
+                &job.source,
+                &job.source_url,
+                job.canonical_url.as_deref(),
+                job.score,
+                reasons,
+                concerns,
+                &job.verification,
+                job.verification_source.as_deref(),
+                job.replacement_url.as_deref(),
+                job.replacement_title.as_deref(),
+                &now,
+                &now,
+                initial_status,
+                0,
+            ],
+        )?;
+
+        let after: (String, String) = transaction.query_row(
+            "SELECT status, verification_status FROM jobs WHERE fingerprint=?",
+            [&job.id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        match before {
+            None => insert_event(
+                &transaction,
+                &job.id,
+                "discovered",
+                None,
+                Some(&after.0),
+                Some(&format!(
+                    "source={}; verification={}",
+                    job.source, job.verification
+                )),
+                &now,
+            )?,
+            Some((old_status, old_verification)) => {
+                if old_verification != after.1 {
+                    insert_event(
+                        &transaction,
+                        &job.id,
+                        "verification",
+                        Some(&old_verification),
+                        Some(&after.1),
+                        None,
+                        &now,
+                    )?;
+                }
+                if old_status != after.0 {
+                    insert_event(
+                        &transaction,
+                        &job.id,
+                        "status",
+                        Some(&old_status),
+                        Some(&after.0),
+                        Some("automatic discovery refresh"),
+                        &now,
+                    )?;
+                }
+            }
+        }
+        count += 1;
+    }
+    transaction.commit()?;
+    Ok(count)
+}
+
 fn row_to_job(headers: &StringRecord, record: &StringRecord) -> Result<Job> {
     let mut row = HashMap::new();
     for (key, value) in headers.iter().zip(record.iter()) {
         row.insert(key.to_ascii_lowercase(), value);
     }
-    let source_url = first_url(&row, &["job_url", "source_url", "job_url_direct", "canonical_url"])
-        .unwrap_or_default();
+    let source_url = first_url(
+        &row,
+        &["job_url", "source_url", "job_url_direct", "canonical_url"],
+    )
+    .unwrap_or_default();
     let canonical_url = first_url(&row, &["job_url_direct", "canonical_url"]);
     let title = clean_text(row.get("title").copied());
     let company = clean_text(row.get("company").copied());
@@ -137,7 +301,10 @@ fn clean_http_url(value: &str) -> Option<String> {
 
 fn clean_text(value: Option<&str>) -> String {
     let value = value.unwrap_or("");
-    let normalized = whitespace_regex().replace_all(value, " ").trim().to_string();
+    let normalized = whitespace_regex()
+        .replace_all(value, " ")
+        .trim()
+        .to_string();
     if is_missing(&normalized) {
         String::new()
     } else {
@@ -146,13 +313,22 @@ fn clean_text(value: Option<&str>) -> String {
 }
 
 fn plain_description(value: &str) -> String {
-    let truncated = value.chars().take(MAX_DESCRIPTION_CHARS).collect::<String>();
+    let truncated = value
+        .chars()
+        .take(MAX_DESCRIPTION_CHARS)
+        .collect::<String>();
     let mut source = truncated;
     for regex in ignored_element_regexes() {
         source = regex.replace_all(&source, " ").into_owned();
     }
     let document = Html::parse_fragment(&source);
-    normalize_text(&document.root_element().text().collect::<Vec<_>>().join(" "))
+    whitespace_regex()
+        .replace_all(
+            &document.root_element().text().collect::<Vec<_>>().join(" "),
+            " ",
+        )
+        .trim()
+        .to_string()
 }
 
 fn first_float(row: &HashMap<String, &str>, keys: &[&str]) -> Option<f64> {
@@ -182,6 +358,23 @@ fn is_missing(value: &str) -> bool {
     MISSING_VALUES
         .iter()
         .any(|missing| value.eq_ignore_ascii_case(missing))
+}
+
+fn insert_event(
+    connection: &Connection,
+    fingerprint: &str,
+    event_type: &str,
+    old_value: Option<&str>,
+    new_value: Option<&str>,
+    note: Option<&str>,
+    created_at: &str,
+) -> Result<()> {
+    connection.execute(
+        "INSERT INTO job_events (job_fingerprint,event_type,old_value,new_value,note,created_at)
+         VALUES (?,?,?,?,?,?)",
+        params![fingerprint, event_type, old_value, new_value, note, created_at],
+    )?;
+    Ok(())
 }
 
 trait OrElseText {
@@ -214,6 +407,7 @@ fn ignored_element_regexes() -> &'static [Regex] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn row(headers: &[&str], values: &[&str]) -> Job {
         row_to_job(
@@ -226,29 +420,63 @@ mod tests {
     #[test]
     fn jobspy_fields_keep_source_and_employer_urls_distinct() {
         let job = row(
-            &["title", "company", "job_url", "job_url_direct", "is_remote", "min_amount"],
-            &["Backend Engineer", "Example", "https://linkedin.test/job", "https://employer.test/job", "true", "50000"],
+            &[
+                "title",
+                "company",
+                "job_url",
+                "job_url_direct",
+                "is_remote",
+                "min_amount",
+            ],
+            &[
+                "Backend Engineer",
+                "Example",
+                "https://linkedin.test/job",
+                "https://employer.test/job",
+                "true",
+                "50000",
+            ],
         );
         assert_eq!(job.source_url, "https://linkedin.test/job");
-        assert_eq!(job.canonical_url.as_deref(), Some("https://employer.test/job"));
+        assert_eq!(
+            job.canonical_url.as_deref(),
+            Some("https://employer.test/job")
+        );
         assert_eq!(job.remote, Some(true));
         assert_eq!(job.salary_min, Some(50_000.0));
     }
 
     #[test]
-    fn html_description_discards_script_and_style_content() {
+    fn html_description_discards_script_and_style_content_without_lowercasing() {
         let job = row(
             &["title", "company", "job_url", "description"],
-            &["Backend", "Example", "https://example.test/job", "<p>Hello <b>world</b></p><script>evil()</script><style>.x{}</style>"],
+            &[
+                "Backend",
+                "Example",
+                "https://example.test/job",
+                "<p>Hello <b>World</b></p><script>evil()</script><style>.x{}</style>",
+            ],
         );
-        assert_eq!(job.description, "hello world");
+        assert_eq!(job.description, "Hello World");
     }
 
     #[test]
     fn missing_placeholders_and_invalid_urls_are_cleaned() {
         let job = row(
-            &["title", "company", "job_url", "job_url_direct", "currency"],
-            &["Backend", "Example", "not a url", "https://example.test/job", "NaN"],
+            &[
+                "title",
+                "company",
+                "job_url",
+                "job_url_direct",
+                "currency",
+            ],
+            &[
+                "Backend",
+                "Example",
+                "not a url",
+                "https://example.test/job",
+                "NaN",
+            ],
         );
         assert_eq!(job.source_url, "https://example.test/job");
         assert!(job.currency.is_none());
@@ -257,15 +485,65 @@ mod tests {
     #[test]
     fn dedup_prefers_richer_direct_listing() {
         let left = row(
-            &["title", "company", "job_url", "job_url_direct", "description"],
-            &["Backend", "Example", "https://board-a.test/job", "https://employer.test/job", "short"],
+            &[
+                "title",
+                "company",
+                "job_url",
+                "job_url_direct",
+                "description",
+            ],
+            &[
+                "Backend",
+                "Example",
+                "https://board-a.test/job",
+                "https://employer.test/job",
+                "short",
+            ],
         );
         let right = row(
-            &["title", "company", "job_url", "job_url_direct", "description"],
-            &["Backend", "Example", "https://board-b.test/job", "https://employer.test/job", "a much richer description"],
+            &[
+                "title",
+                "company",
+                "job_url",
+                "job_url_direct",
+                "description",
+            ],
+            &[
+                "Backend",
+                "Example",
+                "https://board-b.test/job",
+                "https://employer.test/job",
+                "a much richer description",
+            ],
         );
         let jobs = deduplicate(vec![left, right]);
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].description, "a much richer description");
+    }
+
+    #[test]
+    fn save_jobs_matches_discovery_status_ownership_rules() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("openjobscout-import-{unique}.sqlite3"));
+        let storage = Storage::open(&path).unwrap();
+        let job = row(
+            &["title", "company", "job_url", "description"],
+            &["Backend", "Example", "https://example.test/job", "Python"],
+        );
+        save_jobs(&storage, &[job.clone()]).unwrap();
+        storage
+            .mark_job(&job.id, ApplicationStatus::Applied, None)
+            .unwrap();
+        let mut refreshed = job.clone();
+        refreshed.verification = "closed".into();
+        save_jobs(&storage, &[refreshed]).unwrap();
+        assert_eq!(
+            storage.find_job(&job.id).unwrap().status,
+            ApplicationStatus::Applied
+        );
+        let _ = fs::remove_file(path);
     }
 }
