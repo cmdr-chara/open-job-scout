@@ -24,6 +24,8 @@ Inside the TUI:
 - `r`, `a`, `i`, `x`, `Shift+O`, and `c` update pipeline status;
 - `u` reloads the SQLite tracker.
 
+The temporary diagnostic workflows used during the port are removed; the branch is validated only by the permanent strict Rust workflow.
+
 ## Remaining parity work
 
 First-party discovery providers, richer queue filters, background TUI search/recheck UX, release packaging, and migration/release validation remain before Rust replaces Python on `main`. The Python implementation remains the behavioral reference until that gate is crossed.
