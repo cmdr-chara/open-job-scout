@@ -1,0 +1,47 @@
+name: Fix Clippy cleanup once
+
+on:
+  push:
+    branches:
+      - rewrite/rust-v2
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rewrite/rust-v2
+      - name: Apply exact diagnostics and self-clean
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          for filename in ('src/reporting.rs', 'src/workflows.rs'):
+              path = Path(filename)
+              text = path.read_text()
+              text = text.replace('format_description::parse(', 'format_description::parse_borrowed::<3>(')
+              path.write_text(text)
+
+          path = Path('src/importing.rs')
+          text = path.read_text().replace(
+              'save_jobs(&storage, &[job.clone()]).unwrap();',
+              'save_jobs(&storage, std::slice::from_ref(&job)).unwrap();',
+          )
+          path.write_text(text)
+          PY
+          cargo fmt --all
+          rm -f ci/clippy-report.txt
+          rm -f .github/workflows/clippy-report-once.yml
+          rm -f .github/workflows/rust-check-report.yml
+          rm -f .github/workflows/fix-clippy-cleanup-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix Rust Clippy diagnostics and clean CI helpers"
+          git push origin HEAD:rewrite/rust-v2
