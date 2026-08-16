@@ -292,9 +292,10 @@ def settings_from_config(config: Mapping[str, Any]) -> FirecrawlSettings:
                 raise ValueError(
                     f"Config value [firecrawl].{key} contains invalid hostname {value!r}."
                 )
-    if include_domains and "exclude_domains" in raw and exclude_domains:
+    if include_domains and exclude_domains and exclude_domains != DEFAULT_EXCLUDE_DOMAINS:
         raise ValueError(
-            "Config values [firecrawl].include_domains and exclude_domains are mutually exclusive."
+            "Config values [firecrawl].include_domains and custom exclude_domains "
+            "are mutually exclusive."
         )
 
     return FirecrawlSettings(
