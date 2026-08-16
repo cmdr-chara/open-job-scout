@@ -6,6 +6,9 @@ use std::{
 use anyhow::{Result, bail};
 use time::{OffsetDateTime, format_description};
 
+#[path = "firecrawl.rs"]
+mod firecrawl;
+
 use crate::{
     config::{expand_path, load_config},
     importing, migration, providers, ranking, reporting,
@@ -20,15 +23,63 @@ pub fn search(storage: &Storage, config_path: &Path, workers: usize) -> Result<P
     }
     let config = load_config(config_path)?;
     let provider_config = providers::load_providers(config_path)?;
-    if provider_config.is_empty() {
+    let firecrawl_config = firecrawl::load(config_path)?;
+    if provider_config.is_empty() && !firecrawl_config.enabled {
         bail!(
-            "no first-party providers are configured; add a [providers] section with Greenhouse, Lever, Ashby, or Recruitee board identifiers"
+            "no discovery source is configured; add first-party [providers] board identifiers or explicitly enable [firecrawl]"
         );
     }
 
-    let batch = providers::discover(&provider_config, &config.search.terms, workers)?;
-    let discovered = batch.jobs.len();
-    let unique = importing::deduplicate(batch.jobs);
+    let mut jobs = Vec::new();
+    let mut errors = Vec::new();
+    let mut provider_tasks = 0usize;
+    let mut successful_sources = 0usize;
+
+    if !provider_config.is_empty() {
+        let batch = providers::discover(&provider_config, &config.search.terms, workers)?;
+        provider_tasks = batch.providers;
+        let failed = batch.errors.len();
+        if batch.providers > failed {
+            successful_sources += 1;
+        }
+        jobs.extend(batch.jobs);
+        errors.extend(batch.errors);
+    }
+
+    let mut firecrawl_searches = 0usize;
+    let mut firecrawl_scrapes = 0usize;
+    let mut firecrawl_interactions = 0usize;
+    if firecrawl_config.enabled {
+        match firecrawl::discover(
+            &firecrawl_config,
+            &config.search.terms,
+            &config.search.location,
+        ) {
+            Ok(batch) => {
+                firecrawl_searches = batch.searches;
+                firecrawl_scrapes = batch.scrapes;
+                firecrawl_interactions = batch.interactions;
+                if batch.searches > 0 || batch.scrapes > 0 {
+                    successful_sources += 1;
+                }
+                jobs.extend(batch.jobs);
+                errors.extend(
+                    batch
+                        .errors
+                        .into_iter()
+                        .map(|error| format!("firecrawl: {error}")),
+                );
+            }
+            Err(error) => errors.push(format!("firecrawl: {error:#}")),
+        }
+    }
+
+    if successful_sources == 0 && !errors.is_empty() {
+        bail!("all configured discovery sources failed: {}", errors.join("; "));
+    }
+
+    let discovered = jobs.len();
+    let unique = importing::deduplicate(jobs);
     let unique_count = unique.len();
 
     let mut retained = Vec::new();
@@ -70,14 +121,19 @@ pub fn search(storage: &Storage, config_path: &Path, workers: usize) -> Result<P
     let output = report_dir.join(report_name()?);
     reporting::write_markdown(&current, &output)?;
 
-    println!("Providers queried: {}", batch.providers);
-    println!("Provider rows: {discovered}");
+    println!("First-party provider tasks queried: {provider_tasks}");
+    if firecrawl_config.enabled {
+        println!(
+            "Firecrawl: searches={firecrawl_searches}, scrapes={firecrawl_scrapes}, interactions={firecrawl_interactions}"
+        );
+    }
+    println!("Discovery rows: {discovered}");
     println!("Unique valid jobs: {unique_count}");
     println!("Rejected by filters: {}", rejected.len());
     println!("Stored: {stored}");
     println!("Marked stale: {stale}");
-    for error in &batch.errors {
-        eprintln!("Provider warning: {}", terminal_text(error));
+    for error in &errors {
+        eprintln!("Discovery warning: {}", terminal_text(error));
     }
     println!("Report: {}", terminal_text(&output.display().to_string()));
     Ok(output)
