@@ -39,9 +39,7 @@ fn validate_firecrawl_filters(config: &firecrawl::FirecrawlConfig) -> Result<()>
         .map(String::as_str)
         .eq(DEFAULT_FIRECRAWL_EXCLUDES.iter().copied());
     if !uses_default_exclusions {
-        bail!(
-            "[firecrawl].include_domains and custom exclude_domains are mutually exclusive"
-        );
+        bail!("[firecrawl].include_domains and custom exclude_domains are mutually exclusive");
     }
     Ok(())
 }
