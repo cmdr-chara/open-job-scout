@@ -739,10 +739,7 @@ mod tests {
         assert_eq!(job.status, ApplicationStatus::New);
         assert!(!job.status_manually_set);
         assert_eq!(job.notes, "interesting team");
-        assert_eq!(
-            storage.events(&id[..10], 10).unwrap()[0].event_type,
-            "note"
-        );
+        assert_eq!(storage.events(&id[..10], 10).unwrap()[0].event_type, "note");
         let _ = fs::remove_file(path);
     }
 

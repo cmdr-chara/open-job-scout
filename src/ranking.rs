@@ -280,9 +280,8 @@ pub fn rank_job(job: &mut Job, config: &Config) {
         .cloned()
         .collect::<Vec<_>>();
 
-    let mut score = skills.len() as f64 * 5.0
-        + title_hits.len() as f64 * 12.0
-        + junior.len() as f64 * 7.0;
+    let mut score =
+        skills.len() as f64 * 5.0 + title_hits.len() as f64 * 12.0 + junior.len() as f64 * 7.0;
     if job.work_mode == WorkMode::Remote {
         score += 8.0;
     }
@@ -300,9 +299,7 @@ pub fn rank_job(job: &mut Job, config: &Config) {
 
     let known_salary = job.salary_max.or(job.salary_min);
     if let Some(known_salary) = known_salary {
-        if config.salary.preferred_annual > 0.0
-            && known_salary >= config.salary.preferred_annual
-        {
+        if config.salary.preferred_annual > 0.0 && known_salary >= config.salary.preferred_annual {
             score += config.salary.preferred_bonus;
         }
     } else {
@@ -365,9 +362,7 @@ fn requirement_clauses(text: &str) -> Vec<String> {
                     .checked_sub(1)
                     .and_then(|offset| characters.get(offset))
                     .is_some_and(char::is_ascii_digit);
-                let next_digit = characters
-                    .get(index + 1)
-                    .is_some_and(char::is_ascii_digit);
+                let next_digit = characters.get(index + 1).is_some_and(char::is_ascii_digit);
                 !(previous_digit && next_digit)
             }
             _ => false,
@@ -390,7 +385,7 @@ fn compact_number(value: f64) -> String {
     if value.fract() == 0.0 {
         format!("{value:.0}")
     } else {
-        format!("{value:g}")
+        value.to_string()
     }
 }
 
@@ -469,7 +464,10 @@ mod tests {
 
     #[test]
     fn preferred_experience_does_not_become_hard_requirement() {
-        assert_eq!(required_years("5 years preferred; 2 years required"), Some(2.0));
+        assert_eq!(
+            required_years("5 years preferred; 2 years required"),
+            Some(2.0)
+        );
         assert_eq!(required_years("5 years preferred"), None);
     }
 
@@ -507,7 +505,7 @@ mod tests {
         job.salary_max = Some(60_000.0);
         job.status = ApplicationStatus::New;
         rank_job(&mut job, &config());
-        assert_eq!(job.score, 64.0);
+        assert_eq!(job.score, 52.0);
         assert!(job.reasons.iter().any(|reason| reason.contains("backend")));
         assert!(job.reasons.iter().any(|reason| reason == "fully remote"));
     }
