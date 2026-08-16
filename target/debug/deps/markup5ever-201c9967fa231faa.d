@@ -1,0 +1,10 @@
+/home/runner/work/open-job-scout/open-job-scout/target/debug/deps/markup5ever-201c9967fa231faa.d: /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/lib.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/interface/mod.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/interface/tree_builder.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/serialize.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/util/buffer_queue.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/util/smallcharset.rs
+
+/home/runner/work/open-job-scout/open-job-scout/target/debug/deps/libmarkup5ever-201c9967fa231faa.rmeta: /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/lib.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/interface/mod.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/interface/tree_builder.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/serialize.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/util/buffer_queue.rs /home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/util/smallcharset.rs
+
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/lib.rs:
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/interface/mod.rs:
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/interface/tree_builder.rs:
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/serialize.rs:
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/util/buffer_queue.rs:
+/home/runner/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/markup5ever-0.39.0/util/smallcharset.rs:
