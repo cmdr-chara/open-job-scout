@@ -8,6 +8,8 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
+from .firecrawl import settings_from_config
+
 APP_DIR = Path.home() / ".openjobscout"
 DEFAULT_CONFIG = APP_DIR / "config.toml"
 
@@ -124,6 +126,10 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
     penalty = profile.get("degree_penalty", 15)
     if isinstance(penalty, bool) or not isinstance(penalty, (int, float)) or penalty < 0:
         raise ValueError("Config value [profile].degree_penalty must be a number >= 0.")
+
+    # Firecrawl remains optional, but when present its limits and safety controls
+    # should fail configuration validation before any network request is made.
+    settings_from_config(config)
     return config
 
 
