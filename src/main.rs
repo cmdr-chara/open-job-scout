@@ -15,7 +15,12 @@ mod ui;
 mod verification;
 mod workflows;
 
-use std::{io, path::PathBuf, process::Command as ProcessCommand, time::Duration};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    process::Command as ProcessCommand,
+    time::Duration,
+};
 
 use anyhow::{Context, Result, bail};
 use app::App;
