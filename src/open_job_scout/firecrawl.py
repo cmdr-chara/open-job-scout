@@ -19,6 +19,7 @@ API_ROOT = "https://api.firecrawl.dev/v2"
 USER_AGENT = "OpenJobScout/0.2 (+https://github.com/cmdr-chara/open-job-scout)"
 MAX_RESPONSE_BYTES = 10_000_000
 MAX_DESCRIPTION_CHARS = 100_000
+MAX_SCRAPE_ID_CHARS = 128
 DEFAULT_EXCLUDE_DOMAINS = (
     "linkedin.com",
     "indeed.com",
@@ -47,8 +48,14 @@ _JOB_SCHEMA: dict[str, Any] = {
                     "enum": ["remote", "hybrid", "onsite", "unknown", None],
                 },
                 "employment_type": {"type": ["string", "null"]},
-                "salary_min": {"type": ["number", "null"]},
-                "salary_max": {"type": ["number", "null"]},
+                "salary_min": {
+                    "type": ["number", "null"],
+                    "description": "Employer-published annual minimum only; null otherwise.",
+                },
+                "salary_max": {
+                    "type": ["number", "null"],
+                    "description": "Employer-published annual maximum only; null otherwise.",
+                },
                 "currency": {"type": ["string", "null"]},
                 "posted_at": {"type": ["string", "null"]},
                 "canonical_url": {"type": ["string", "null"]},
@@ -74,12 +81,15 @@ _JOB_SCHEMA: dict[str, Any] = {
 _EXTRACTION_PROMPT = """
 Classify this public page as a single job posting, a careers/jobs index, or other.
 Use only facts visible on the page. Never infer missing company, salary, location,
-remote status, employment type, dates, or URLs. For a single currently open job,
-return the normalized job fields and preserve the employer's description text without
-navigation/cookie/footer boilerplate. For a careers index, return public job-posting
-links visible on the page. Set requires_interaction only when ordinary public navigation
-or a load-more control is needed to reveal listings. Do not log in, fill an application,
-solve or bypass a CAPTCHA, or bypass any access control.
+remote status, employment type, dates, or URLs. Salary fields are annual compensation
+only: include them only when the employer explicitly publishes annual values on the
+page; never estimate or annualize hourly, monthly, daily, or otherwise ambiguous
+compensation. For a single currently open job, return the normalized job fields and
+preserve the employer's description text without navigation/cookie/footer boilerplate.
+For a careers index, return public job-posting links visible on the page. Set
+requires_interaction only when ordinary public navigation or a load-more control is
+needed to reveal listings. Do not log in, fill an application, solve or bypass a
+CAPTCHA, or bypass any access control.
 """.strip()
 
 _INTERACT_PROMPT = """
@@ -179,9 +189,6 @@ class FirecrawlClient:
             "timeout": settings.timeout_seconds * 1000,
             "ignoreInvalidURLs": True,
         }
-        # Firecrawl's includeDomains/excludeDomains options are mutually exclusive.
-        # A user-provided allow-list therefore takes precedence over the default
-        # job-board/ATS exclusions.
         if settings.include_domains:
             payload["includeDomains"] = list(settings.include_domains)
         elif settings.exclude_domains:
@@ -192,22 +199,25 @@ class FirecrawlClient:
         return [item for item in web or [] if isinstance(item, dict)]
 
     def scrape(self, url: str, settings: FirecrawlSettings) -> dict[str, Any]:
-        payload = {
-            "url": url,
-            "formats": [
-                {
-                    "type": "json",
-                    "prompt": _EXTRACTION_PROMPT,
-                    "schema": _JOB_SCHEMA,
-                }
-            ],
-            "onlyMainContent": True,
-            "removeBase64Images": True,
-            "blockAds": True,
-            "zeroDataRetention": settings.zero_data_retention,
-            "timeout": settings.timeout_seconds * 1000,
-        }
-        response = self._request("POST", "/scrape", payload)
+        response = self._request(
+            "POST",
+            "/scrape",
+            {
+                "url": url,
+                "formats": [
+                    {
+                        "type": "json",
+                        "prompt": _EXTRACTION_PROMPT,
+                        "schema": _JOB_SCHEMA,
+                    }
+                ],
+                "onlyMainContent": True,
+                "removeBase64Images": True,
+                "blockAds": True,
+                "zeroDataRetention": settings.zero_data_retention,
+                "timeout": settings.timeout_seconds * 1000,
+            },
+        )
         data = response.get("data")
         return data if isinstance(data, dict) else {}
 
@@ -231,7 +241,6 @@ class FirecrawlClient:
                 f"/scrape/{urllib.parse.quote(scrape_id, safe='')}/interact",
             )
         except RuntimeError:
-            # Cleanup failure must not turn already-discovered jobs into a failed search.
             return
 
 
@@ -266,23 +275,40 @@ def settings_from_config(config: Mapping[str, Any]) -> FirecrawlSettings:
             raise ValueError(f"Config value [firecrawl].{key} contains a blank item.")
         return cleaned
 
-    settings = FirecrawlSettings(
+    career_urls = strings("career_urls")
+    interact_urls = strings("interact_urls")
+    include_domains = strings("include_domains")
+    exclude_domains = strings("exclude_domains", DEFAULT_EXCLUDE_DOMAINS)
+    for key, values in (("career_urls", career_urls), ("interact_urls", interact_urls)):
+        for value in values:
+            if not _public_http_url(value):
+                raise ValueError(
+                    f"Config value [firecrawl].{key} contains an unsafe or invalid "
+                    "public HTTP(S) URL."
+                )
+    for key, values in (("include_domains", include_domains), ("exclude_domains", exclude_domains)):
+        for value in values:
+            if not _valid_domain(value):
+                raise ValueError(
+                    f"Config value [firecrawl].{key} contains invalid hostname {value!r}."
+                )
+    if include_domains and "exclude_domains" in raw and exclude_domains:
+        raise ValueError(
+            "Config values [firecrawl].include_domains and exclude_domains are mutually exclusive."
+        )
+
+    return FirecrawlSettings(
         enabled=boolean("enabled", False),
         search_enabled=boolean("search_enabled", True),
         search_limit_per_term=integer("search_limit_per_term", 8, 1, 50),
         max_scrapes=integer("max_scrapes", 16, 1, 100),
-        career_urls=strings("career_urls"),
-        interact_urls=strings("interact_urls"),
-        include_domains=strings("include_domains"),
-        exclude_domains=strings("exclude_domains", DEFAULT_EXCLUDE_DOMAINS),
+        career_urls=career_urls,
+        interact_urls=interact_urls,
+        include_domains=include_domains,
+        exclude_domains=exclude_domains,
         timeout_seconds=integer("timeout_seconds", 45, 5, 300),
         zero_data_retention=boolean("zero_data_retention", True),
     )
-    if settings.include_domains and settings.exclude_domains != DEFAULT_EXCLUDE_DOMAINS:
-        raise ValueError(
-            "Config values [firecrawl].include_domains and exclude_domains are mutually exclusive."
-        )
-    return settings
 
 
 def discover_firecrawl(
@@ -316,7 +342,7 @@ def discover_firecrawl(
     queue: deque[str] = deque()
     queued: set[str] = set()
     scraped: set[str] = set()
-    interact_keys = {_url_key(url) for url in settings.interact_urls if _public_http_url(url)}
+    interact_keys = {_url_key(url) for url in settings.interact_urls}
 
     def enqueue(url: object) -> None:
         if not isinstance(url, str) or not _public_http_url(url):
@@ -369,9 +395,11 @@ def discover_firecrawl(
         if extracted.get("page_type") == "job" and job is not None:
             batch.jobs.append(job)
 
-        for link in extracted.get("job_links") or []:
-            if isinstance(link, Mapping):
-                enqueue(link.get("url"))
+        links = extracted.get("job_links")
+        if isinstance(links, list):
+            for link in links:
+                if isinstance(link, Mapping):
+                    enqueue(link.get("url"))
 
         if extracted.get("requires_interaction") is not True:
             continue
@@ -383,7 +411,7 @@ def discover_firecrawl(
             continue
         scrape_id = _scrape_id(data)
         if not scrape_id:
-            batch.warnings.append(f"interaction requested for {url}, but no scrape ID was returned")
+            batch.warnings.append(f"interaction requested for {url}, but no valid scrape ID was returned")
             continue
         try:
             links = client.interact(scrape_id, settings)
@@ -479,6 +507,19 @@ def _public_http_url(value: object) -> bool:
     return address.is_global
 
 
+def _valid_domain(value: str) -> bool:
+    value = value.strip()
+    if (
+        not value
+        or any(character.isspace() for character in value)
+        or "//" in value
+        or "/" in value
+        or ":" in value
+    ):
+        return False
+    return _public_http_url(f"https://{value}/")
+
+
 def _url_key(value: str) -> str:
     try:
         parts = urllib.parse.urlsplit(value.strip())
@@ -494,7 +535,9 @@ def _scrape_id(data: Mapping[str, Any]) -> str | None:
     if not isinstance(metadata, Mapping):
         return None
     value = metadata.get("scrapeId") or metadata.get("scrape_id")
-    return value if isinstance(value, str) and value else None
+    if not isinstance(value, str) or not value or len(value) > MAX_SCRAPE_ID_CHARS:
+        return None
+    return value if re.fullmatch(r"[A-Za-z0-9_-]+", value) else None
 
 
 def _parse_json_text(text: str) -> object:
