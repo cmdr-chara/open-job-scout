@@ -411,7 +411,9 @@ def discover_firecrawl(
             continue
         scrape_id = _scrape_id(data)
         if not scrape_id:
-            batch.warnings.append(f"interaction requested for {url}, but no valid scrape ID was returned")
+            batch.warnings.append(
+                f"interaction requested for {url}, but no valid scrape ID was returned"
+            )
             continue
         try:
             links = client.interact(scrape_id, settings)
