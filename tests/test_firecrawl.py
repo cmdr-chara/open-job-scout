@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import http.client
+import urllib.request
 from dataclasses import dataclass, field
 
 import pytest
@@ -9,6 +11,7 @@ from open_job_scout.firecrawl import (
     FirecrawlClient,
     FirecrawlSettings,
     _job_from_extracted,
+    _public_http_url,
     discover_firecrawl,
     settings_from_config,
 )
@@ -109,6 +112,59 @@ def test_search_scrape_normalizes_only_job_fields() -> None:
     assert job.salary_min == 45_000
     assert job.salary_source == "firecrawl"
     assert job.description == "Build public APIs."
+    assert batch.successful is True
+
+
+def test_empty_search_is_a_successful_source_result() -> None:
+    client = FakeFirecrawl()
+    batch = discover_firecrawl(base_config(), client=client)
+
+    assert batch.searches == 1
+    assert batch.scrapes == 0
+    assert batch.successful is True
+
+
+def test_failed_scrapes_are_counted_against_the_attempt_budget() -> None:
+    class FailingScrapeClient(FakeFirecrawl):
+        def scrape(self, url: str, settings: FirecrawlSettings) -> dict:
+            self.scrapes.append(url)
+            raise RuntimeError("temporary Firecrawl failure")
+
+    urls = [f"https://example.com/jobs/{number}" for number in range(4)]
+    client = FailingScrapeClient(search_results=[{"url": url} for url in urls])
+    batch = discover_firecrawl(base_config(max_scrapes=2), client=client)
+
+    assert len(client.scrapes) == 2
+    assert batch.scrapes == 0
+    assert batch.successful is False
+
+
+def test_legacy_numeric_hosts_are_rejected() -> None:
+    assert _public_http_url("https://8.8.8.8/jobs") is True
+    for value in (
+        "http://127.1/jobs",
+        "http://2130706433/jobs",
+        "http://0x7f000001/jobs",
+    ):
+        assert _public_http_url(value) is False
+
+
+def test_response_read_failures_are_normalized(monkeypatch) -> None:
+    class BrokenResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, _size: int) -> bytes:
+            raise http.client.IncompleteRead(b"partial")
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *_args, **_kwargs: BrokenResponse())
+    client = FirecrawlClient("fc-test", 10)
+
+    with pytest.raises(RuntimeError, match="request failed: IncompleteRead"):
+        client._request("GET", "/search")
 
 
 def test_careers_page_follows_public_job_links() -> None:
