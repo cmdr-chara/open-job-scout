@@ -6,6 +6,7 @@ import pytest
 
 from open_job_scout.firecrawl import (
     DEFAULT_EXCLUDE_DOMAINS,
+    FirecrawlClient,
     FirecrawlSettings,
     _job_from_extracted,
     discover_firecrawl,
@@ -203,9 +204,26 @@ def test_private_or_non_http_urls_are_not_normalized_into_jobs() -> None:
     assert job.canonical_url == "https://example.com/jobs/1"
 
 
-def test_include_domains_use_the_default_exclusion_set_as_fallback() -> None:
-    settings = settings_from_config(base_config(include_domains=["example.com"])["firecrawl"] | {})
-    # This test calls the public parser with the full expected config shape below;
-    # the assertion guards the default that keeps JobSpy/direct ATS sources preferred.
-    assert DEFAULT_EXCLUDE_DOMAINS
-    assert settings is not None
+def test_include_domains_take_precedence_over_default_exclusions(monkeypatch) -> None:
+    captured: dict = {}
+
+    def fake_request(self, method: str, path: str, payload: dict | None = None) -> dict:
+        captured.update(payload or {})
+        return {"success": True, "data": {"web": []}}
+
+    monkeypatch.setattr(FirecrawlClient, "_request", fake_request)
+    settings = settings_from_config(base_config(include_domains=["example.com"]))
+    assert settings.exclude_domains == DEFAULT_EXCLUDE_DOMAINS
+    FirecrawlClient("fc-test", 10).search("backend jobs", settings)
+    assert captured["includeDomains"] == ["example.com"]
+    assert "excludeDomains" not in captured
+
+
+def test_custom_include_and_exclude_domains_are_rejected() -> None:
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        settings_from_config(
+            base_config(
+                include_domains=["example.com"],
+                exclude_domains=["other.example"],
+            )
+        )
