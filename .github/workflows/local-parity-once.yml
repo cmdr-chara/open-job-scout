@@ -1,0 +1,193 @@
+name: Local parity once
+
+on:
+  push:
+    branches:
+      - rewrite/rust-v2
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rewrite/rust-v2
+      - name: Add discovery upsert and normalize local parity code
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          importing = Path('src/importing.rs')
+          text = importing.read_text()
+          text = text.replace(
+              '    normalize_text(&document.root_element().text().collect::<Vec<_>>().join(" "))',
+              '    whitespace_regex()\n        .replace_all(&document.root_element().text().collect::<Vec<_>>().join(" "), " ")\n        .trim()\n        .to_string()',
+          )
+          importing.write_text(text)
+
+          reporting = Path('src/reporting.rs')
+          text = reporting.read_text().replace(
+              '    let timestamp = OffsetDateTime::now_local()\n        .unwrap_or_else(|_| OffsetDateTime::now_utc())',
+              '    let timestamp = OffsetDateTime::now_utc()',
+          )
+          reporting.write_text(text)
+
+          storage = Path('src/storage.rs')
+          text = storage.read_text()
+          anchor = '    pub fn refresh_jobs(&self, jobs: &[Job]) -> Result<usize> {'
+          if 'pub fn save_jobs(&self, jobs: &[Job])' not in text:
+              method = r'''    pub fn save_jobs(&self, jobs: &[Job]) -> Result<usize> {
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction()?;
+        let now = now_rfc3339()?;
+        let mut count = 0;
+        for job in jobs {
+            let before: Option<(String, String)> = transaction
+                .query_row(
+                    "SELECT status, verification_status FROM jobs WHERE fingerprint=?",
+                    [&job.id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            let remote = job.remote.map(i64::from);
+            let reasons = serde_json::to_string(&job.reasons)?;
+            let concerns = serde_json::to_string(&job.concerns)?;
+            let initial_status = if job.verification == "closed" { "closed" } else { "new" };
+            transaction.execute(
+                "INSERT INTO jobs (
+                    fingerprint,title,company,location,remote,work_mode,employment_type,
+                    salary_min,salary_max,currency,salary_source,description,posted_at,
+                    source,source_url,canonical_url,score,reasons,concerns,
+                    verification_status,verification_source,replacement_url,replacement_title,
+                    first_seen_at,last_seen_at,status,status_manually_set
+                 ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 ON CONFLICT(fingerprint) DO UPDATE SET
+                    title=excluded.title,
+                    company=excluded.company,
+                    location=excluded.location,
+                    remote=excluded.remote,
+                    work_mode=excluded.work_mode,
+                    employment_type=excluded.employment_type,
+                    salary_min=COALESCE(excluded.salary_min,jobs.salary_min),
+                    salary_max=COALESCE(excluded.salary_max,jobs.salary_max),
+                    currency=COALESCE(excluded.currency,jobs.currency),
+                    salary_source=COALESCE(excluded.salary_source,jobs.salary_source),
+                    description=excluded.description,
+                    posted_at=excluded.posted_at,
+                    source=excluded.source,
+                    source_url=excluded.source_url,
+                    canonical_url=COALESCE(excluded.canonical_url,jobs.canonical_url),
+                    score=excluded.score,
+                    reasons=excluded.reasons,
+                    concerns=excluded.concerns,
+                    verification_status=excluded.verification_status,
+                    verification_source=excluded.verification_source,
+                    replacement_url=excluded.replacement_url,
+                    replacement_title=excluded.replacement_title,
+                    last_seen_at=excluded.last_seen_at,
+                    status=CASE
+                        WHEN jobs.status_manually_set=1 THEN jobs.status
+                        WHEN excluded.verification_status='closed' THEN 'closed'
+                        WHEN jobs.status IN ('closed','stale') THEN 'new'
+                        ELSE jobs.status
+                    END,
+                    status_updated_at=CASE
+                        WHEN jobs.status_manually_set=1 THEN jobs.status_updated_at
+                        WHEN excluded.verification_status='closed' AND jobs.status<>'closed'
+                        THEN excluded.last_seen_at
+                        WHEN excluded.verification_status<>'closed'
+                             AND jobs.status IN ('closed','stale')
+                        THEN excluded.last_seen_at
+                        ELSE jobs.status_updated_at
+                    END",
+                params![
+                    job.id,
+                    job.title,
+                    job.company,
+                    job.location,
+                    remote,
+                    job.work_mode.as_str(),
+                    job.employment_type,
+                    job.salary_min,
+                    job.salary_max,
+                    job.currency,
+                    job.salary_source,
+                    job.description,
+                    job.posted,
+                    job.source,
+                    job.source_url,
+                    job.canonical_url,
+                    job.score,
+                    reasons,
+                    concerns,
+                    job.verification,
+                    job.verification_source,
+                    job.replacement_url,
+                    job.replacement_title,
+                    now,
+                    now,
+                    initial_status,
+                    0,
+                ],
+            )?;
+            let after: (String, String) = transaction.query_row(
+                "SELECT status, verification_status FROM jobs WHERE fingerprint=?",
+                [&job.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?;
+            match before {
+                None => record_event(
+                    &transaction,
+                    &job.id,
+                    "discovered",
+                    None,
+                    Some(&after.0),
+                    Some(&format!("source={}; verification={}", job.source, job.verification)),
+                    &now,
+                )?,
+                Some((old_status, old_verification)) => {
+                    if old_verification != after.1 {
+                        record_event(
+                            &transaction,
+                            &job.id,
+                            "verification",
+                            Some(&old_verification),
+                            Some(&after.1),
+                            None,
+                            &now,
+                        )?;
+                    }
+                    if old_status != after.0 {
+                        record_event(
+                            &transaction,
+                            &job.id,
+                            "status",
+                            Some(&old_status),
+                            Some(&after.0),
+                            Some("automatic discovery refresh"),
+                            &now,
+                        )?;
+                    }
+                }
+            }
+            count += 1;
+        }
+        transaction.commit()?;
+        Ok(count)
+    }
+
+'''
+              text = text.replace(anchor, method + anchor)
+          storage.write_text(text)
+          PY
+          cargo fmt --all
+          rm .github/workflows/local-parity-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src .github/workflows/local-parity-once.yml
+          git commit -m "Complete local import and report parity"
+          git push origin HEAD:rewrite/rust-v2
