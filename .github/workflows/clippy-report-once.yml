@@ -1,0 +1,29 @@
+name: Clippy report once
+
+on:
+  push:
+    branches:
+      - rewrite/rust-v2
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Capture Clippy output
+        shell: bash
+        run: |
+          set +e
+          CARGO_TERM_COLOR=never cargo clippy --all-targets --all-features -- -D warnings > clippy-report.txt 2>&1
+          code=$?
+          echo >> clippy-report.txt
+          echo "exit=$code" >> clippy-report.txt
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clippy-report
+          path: clippy-report.txt
+          if-no-files-found: error
