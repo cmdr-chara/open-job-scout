@@ -1,0 +1,330 @@
+name: Wire background TUI once
+
+on:
+  push:
+    branches:
+      - rewrite/rust-v2
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rewrite/rust-v2
+      - name: Wire background operations and self-remove
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # app.rs: add busy state, spinner state, public reload helper.
+          path = Path('src/app.rs')
+          text = path.read_text()
+          if 'pub enum BusyKind' not in text:
+              anchor = '''#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputMode {
+    Browse,
+    Search,
+    Note,
+}
+'''
+              replacement = anchor + '''
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BusyKind {
+    Search,
+    Recheck,
+}
+
+impl BusyKind {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Search => "Searching",
+            Self::Recheck => "Rechecking",
+        }
+    }
+}
+'''
+              if anchor not in text:
+                  raise SystemExit('InputMode anchor not found')
+              text = text.replace(anchor, replacement, 1)
+          if 'pub busy: Option<BusyKind>' not in text:
+              text = text.replace(
+                  '    pub open_url: Option<String>,\n',
+                  '    pub open_url: Option<String>,\n    pub busy: Option<BusyKind>,\n    pub spinner_frame: usize,\n',
+                  1,
+              )
+          # Both constructors contain open_url: None.
+          text = text.replace(
+              '            open_url: None,\n            storage:',
+              '            open_url: None,\n            busy: None,\n            spinner_frame: 0,\n            storage:',
+          )
+          text = text.replace('    fn reload_jobs(&mut self) {', '    pub fn reload_jobs(&mut self) {')
+          if 'pub fn start_busy' not in text:
+              anchor = '''    pub fn take_open_url(&mut self) -> Option<String> {
+        self.open_url.take()
+    }
+'''
+              addition = anchor + '''
+    pub fn start_busy(&mut self, kind: BusyKind) {
+        self.busy = Some(kind);
+        self.spinner_frame = 0;
+        self.notice = Some(format!("{}…", kind.label()));
+    }
+
+    pub fn tick_spinner(&mut self) {
+        if self.busy.is_some() {
+            self.spinner_frame = self.spinner_frame.wrapping_add(1);
+        }
+    }
+
+    pub fn finish_busy(&mut self, notice: String) {
+        self.busy = None;
+        self.spinner_frame = 0;
+        self.reload_jobs();
+        self.notice = Some(notice);
+    }
+'''
+              if anchor not in text:
+                  raise SystemExit('take_open_url anchor not found')
+              text = text.replace(anchor, addition, 1)
+          path.write_text(text)
+
+          # main.rs: use operations and spawn worker threads from TUI.
+          path = Path('src/main.rs')
+          text = path.read_text()
+          if 'mod operations;' not in text:
+              text = text.replace('mod model;\n', 'mod model;\nmod operations;\n', 1)
+          text = text.replace('use app::App;', 'use app::{App, BusyKind, InputMode};')
+          if 'sync::mpsc' not in text.split('use anyhow', 1)[0]:
+              old = 'use std::{io, path::PathBuf, process::Command as ProcessCommand, time::Duration};'
+              new = '''use std::{
+    io,
+    path::{Path, PathBuf},
+    process::Command as ProcessCommand,
+    sync::mpsc,
+    thread,
+    time::Duration,
+};'''
+              if old in text:
+                  text = text.replace(old, new, 1)
+              else:
+                  # rustfmt may have expanded the std import already.
+                  text = text.replace('    process::Command as ProcessCommand,\n', '    process::Command as ProcessCommand,\n    sync::mpsc,\n    thread,\n', 1)
+          # Preserve paths for TUI before Storage takes ownership.
+          old = '    let storage = Storage::open(database)?;\n'
+          new = '    let database_path = database.clone();\n    let storage = Storage::open(database)?;\n'
+          if 'let database_path = database.clone();' not in text:
+              if old not in text:
+                  raise SystemExit('storage open anchor not found')
+              text = text.replace(old, new, 1)
+          text = text.replace(
+              '        Commands::Ui => run_ui(storage),',
+              '        Commands::Ui => run_ui(storage, database_path, config_path),',
+              1,
+          )
+          # Replace run_ui/event loop region wholesale to keep behavior coherent.
+          start = text.find('fn run_ui(')
+          end = text.find('\nfn open_in_browser(', start)
+          if start == -1 or end == -1:
+              raise SystemExit('run_ui region not found')
+          replacement = r'''fn run_ui(storage: Storage, database_path: PathBuf, config_path: PathBuf) -> Result<()> {
+    let app = App::from_storage(storage)?;
+    let mut terminal = setup_terminal()?;
+    let result = run_event_loop(&mut terminal, app, database_path, config_path);
+    let cleanup = restore_terminal(&mut terminal);
+    result?;
+    cleanup?;
+    Ok(())
+}
+
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+    terminal.clear()?;
+    Ok(terminal)
+}
+
+fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        DisableMouseCapture,
+        LeaveAlternateScreen,
+        Show
+    )?;
+    terminal.show_cursor()?;
+    Ok(())
+}
+
+type OperationMessage = std::result::Result<operations::OperationSummary, String>;
+
+fn start_background_operation(
+    app: &mut App,
+    sender: &mpsc::Sender<OperationMessage>,
+    kind: BusyKind,
+    database_path: &Path,
+    config_path: &Path,
+) {
+    if let Some(current) = app.busy {
+        app.notice = Some(format!("{} is already running", current.label()));
+        return;
+    }
+    let sender = sender.clone();
+    let database_path = database_path.to_path_buf();
+    let config_path = config_path.to_path_buf();
+    app.start_busy(kind);
+    thread::spawn(move || {
+        let result = match kind {
+            BusyKind::Search => operations::search(&database_path, &config_path, 6),
+            BusyKind::Recheck => operations::recheck(&database_path, &config_path, 6),
+        }
+        .map_err(|error| format!("{error:#}"));
+        let _ = sender.send(result);
+    });
+}
+
+fn apply_operation_result(app: &mut App, result: OperationMessage) {
+    match result {
+        Ok(summary) => {
+            let mut notice = summary.notice();
+            if let Some(report) = summary.report {
+                notice.push_str(&format!(" · report {}", report.display()));
+            }
+            app.finish_busy(notice);
+        }
+        Err(error) => {
+            app.busy = None;
+            app.spinner_frame = 0;
+            app.notice = Some(format!("Operation failed · {error}"));
+        }
+    }
+}
+
+fn run_event_loop(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    mut app: App,
+    database_path: PathBuf,
+    config_path: PathBuf,
+) -> Result<()> {
+    let (operation_sender, operation_receiver) = mpsc::channel::<OperationMessage>();
+    while !app.should_quit {
+        while let Ok(result) = operation_receiver.try_recv() {
+            apply_operation_result(&mut app, result);
+        }
+        app.tick_spinner();
+        terminal.draw(|frame| ui::render(frame, &app))?;
+        let poll_interval = if app.busy.is_some() { 80 } else { 250 };
+        if !event::poll(Duration::from_millis(poll_interval))? {
+            continue;
+        }
+        match event::read()? {
+            Event::Key(key) if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) => {
+                let can_launch = app.input_mode == InputMode::Browse
+                    && !app.show_help
+                    && !app.show_history;
+                if can_launch && key.code == KeyCode::Char('s') {
+                    start_background_operation(
+                        &mut app,
+                        &operation_sender,
+                        BusyKind::Search,
+                        &database_path,
+                        &config_path,
+                    );
+                    continue;
+                }
+                if can_launch && key.code == KeyCode::Char('v') {
+                    start_background_operation(
+                        &mut app,
+                        &operation_sender,
+                        BusyKind::Recheck,
+                        &database_path,
+                        &config_path,
+                    );
+                    continue;
+                }
+                app.handle_key(key);
+                if let Some(url) = app.take_open_url() {
+                    match open_in_browser(&url) {
+                        Ok(()) => app.notice = Some("Opened employer listing".into()),
+                        Err(error) => app.notice = Some(format!("Could not open listing: {error}")),
+                    }
+                }
+            }
+            Event::Mouse(mouse) => match mouse.kind {
+                MouseEventKind::ScrollDown => {
+                    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+                }
+                MouseEventKind::ScrollUp => {
+                    app.handle_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE))
+                }
+                _ => {}
+            },
+            Event::Resize(_, _) => {}
+            _ => {}
+        }
+    }
+    Ok(())
+}
+'''
+          text = text[:start] + replacement + text[end:]
+          path.write_text(text)
+
+          # ui.rs: show busy status and shortcuts in header/footer/help.
+          path = Path('src/ui.rs')
+          text = path.read_text()
+          if 'fn spinner(' not in text:
+              insert_at = text.find('\nfn render_header(')
+              helper = '''
+fn spinner(frame: usize) -> &'static str {
+    const FRAMES: [&str; 8] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
+    FRAMES[frame % FRAMES.len()]
+}
+'''
+              text = text[:insert_at] + helper + text[insert_at:]
+          old = '''        Span::styled(
+            format!("  {} tracked", app.jobs.len()),
+            Style::new().fg(theme::FAINT),
+        ),
+'''
+          if old in text and 'busy.label()' not in text:
+              new = old + '''        if let Some(busy) = app.busy {
+            Span::styled(
+                format!("  {} {}", spinner(app.spinner_frame), busy.label()),
+                Style::new().fg(theme::CYAN).add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::raw("")
+        },
+'''
+              text = text.replace(old, new, 1)
+          # Footer shortcuts.
+          if 'Span::styled(" search   ", theme::muted()),' in text and 'Span::styled(" discover   ", theme::muted()),' not in text:
+              text = text.replace(
+                  '        Span::styled(" search   ", theme::muted()),\n',
+                  '        Span::styled(" search   ", theme::muted()),\n        keycap("S"),\n        Span::styled(" discover   ", theme::muted()),\n        keycap("V"),\n        Span::styled(" recheck   ", theme::muted()),\n',
+                  1,
+              )
+          # Help overlay.
+          if 'help_line("U", "Reload tracker from SQLite"),' in text and 'help_line("S", "Discover jobs in background"),' not in text:
+              text = text.replace(
+                  '        help_line("U", "Reload tracker from SQLite"),\n',
+                  '        help_line("U", "Reload tracker from SQLite"),\n        help_line("S", "Discover jobs in background"),\n        help_line("V", "Recheck links in background"),\n',
+                  1,
+              )
+          path.write_text(text)
+          PY
+          cargo fmt --all
+          rm .github/workflows/wire-background-tui-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/app.rs src/main.rs src/ui.rs .github/workflows/wire-background-tui-once.yml
+          git commit -m "Run search and recheck in the background TUI"
+          git push origin HEAD:rewrite/rust-v2
