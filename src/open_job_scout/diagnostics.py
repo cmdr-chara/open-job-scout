@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .config import DEFAULT_CONFIG, expand_path, load_config
 from .database import SCHEMA_VERSION
+from .firecrawl import settings_from_config
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +76,28 @@ def run_diagnostics(config_path: Path | None = None) -> list[Diagnostic]:
         )
     else:
         checks.append(Diagnostic("ok", "sources", f"Configured sources: {', '.join(sites)}"))
+
+    firecrawl = settings_from_config(config)
+    if not firecrawl.enabled:
+        checks.append(
+            Diagnostic("ok", "Firecrawl", "Optional Firecrawl discovery is disabled.")
+        )
+    elif os.environ.get("FIRECRAWL_API_KEY", "").strip():
+        checks.append(
+            Diagnostic(
+                "ok",
+                "Firecrawl",
+                "Enabled and FIRECRAWL_API_KEY is present in the environment.",
+            )
+        )
+    else:
+        checks.append(
+            Diagnostic(
+                "error",
+                "Firecrawl",
+                "Enabled but FIRECRAWL_API_KEY is not set in the environment.",
+            )
+        )
 
     database = expand_path(config["storage"]["database"])
     if database.exists():
