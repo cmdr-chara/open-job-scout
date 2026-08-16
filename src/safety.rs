@@ -2,6 +2,11 @@
 use std::fs;
 use std::path::Path;
 
+#[cfg(windows)]
+use std::{path::PathBuf, process::Command};
+
+#[cfg(windows)]
+use anyhow::Context;
 use anyhow::Result;
 use url::Url;
 
@@ -43,8 +48,12 @@ pub(crate) fn secure_private_directory(path: &Path) -> Result<()> {
         permissions.set_mode(0o700);
         fs::set_permissions(path, permissions)?;
     }
-    #[cfg(not(unix))]
-    let _ = path;
+    #[cfg(windows)]
+    harden_windows(path, true)?;
+    #[cfg(not(any(unix, windows)))]
+    return Err(anyhow::anyhow!(
+        "private directory permissions are unsupported on this platform"
+    ));
     Ok(())
 }
 
@@ -57,9 +66,109 @@ pub(crate) fn secure_private_file(path: &Path) -> Result<()> {
         permissions.set_mode(0o600);
         fs::set_permissions(path, permissions)?;
     }
-    #[cfg(not(unix))]
-    let _ = path;
+    #[cfg(windows)]
+    harden_windows(path, false)?;
+    #[cfg(not(any(unix, windows)))]
+    return Err(anyhow::anyhow!(
+        "private file permissions are unsupported on this platform"
+    ));
     Ok(())
+}
+
+#[cfg(windows)]
+fn harden_windows(path: &Path, directory: bool) -> Result<()> {
+    let sid = current_user_sid()?;
+    let permission = if directory {
+        format!("*{sid}:(OI)(CI)F")
+    } else {
+        format!("*{sid}:F")
+    };
+    let output = run_icacls(path, &["/L", "/reset"])?;
+    ensure_icacls_success(path, output)?;
+    let output = run_icacls(
+        path,
+        &["/L", "/inheritance:r", "/grant:r", permission.as_str()],
+    )?;
+    ensure_icacls_success(path, output)
+}
+
+#[cfg(windows)]
+fn ensure_icacls_success(path: &Path, output: std::process::Output) -> Result<()> {
+    if output.status.success() {
+        return Ok(());
+    }
+    let detail = if output.stderr.is_empty() {
+        &output.stdout
+    } else {
+        &output.stderr
+    };
+    let detail = terminal_text(&String::from_utf8_lossy(detail));
+    Err(anyhow::anyhow!(
+        "icacls failed for {}: {}",
+        path.display(),
+        detail.trim()
+    ))
+}
+
+#[cfg(windows)]
+fn run_icacls(path: &Path, arguments: &[&str]) -> Result<std::process::Output> {
+    let mut command = Command::new(system_tool("icacls.exe")?);
+    command.arg(path);
+    command.args(arguments);
+    command
+        .output()
+        .with_context(|| format!("failed to run icacls for {}", path.display()))
+}
+
+#[cfg(windows)]
+fn system_tool(name: &str) -> Result<PathBuf> {
+    let root = std::env::var_os("SystemRoot")
+        .ok_or_else(|| anyhow::anyhow!("SystemRoot is not set; cannot harden Windows ACLs"))?;
+    let path = PathBuf::from(root).join("System32").join(name);
+    if !path.is_file() {
+        return Err(anyhow::anyhow!(
+            "Windows system tool is missing: {}",
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
+#[cfg(windows)]
+fn current_user_sid() -> Result<String> {
+    let output = Command::new(system_tool("whoami.exe")?)
+        .args(["/user", "/fo", "csv", "/nh"])
+        .output()
+        .context("failed to identify the current Windows user")?;
+    if !output.status.success() {
+        return Err(anyhow::anyhow!(
+            "whoami.exe failed to identify the current user"
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .split(|character: char| character == ',' || character == '"' || character.is_whitespace())
+        .find(|candidate| is_sid(candidate))
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("whoami.exe returned no usable user SID"))
+}
+
+#[cfg(windows)]
+fn is_sid(value: &str) -> bool {
+    let mut parts = value.split('-');
+    if parts.next() != Some("S") || parts.next() != Some("1") {
+        return false;
+    }
+    let Some(authority) = parts.next() else {
+        return false;
+    };
+    !authority.is_empty()
+        && authority
+            .bytes()
+            .all(|character| character.is_ascii_digit())
+        && parts.all(|part| {
+            !part.is_empty() && part.bytes().all(|character| character.is_ascii_digit())
+        })
 }
 
 #[cfg(test)]
@@ -104,5 +213,40 @@ mod tests {
             0o600
         );
         let _ = fs::remove_file(path);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn private_files_and_directories_stop_acl_inheritance() {
+        use std::{
+            fs,
+            time::{SystemTime, UNIX_EPOCH},
+        };
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("openjobscout-private-{unique}"));
+        let file = directory.join("private.txt");
+        fs::create_dir(&directory).unwrap();
+        fs::write(&file, "private").unwrap();
+        run_icacls(&file, &["/grant", "*S-1-1-0:R"]).unwrap();
+
+        harden_windows(&directory, true).unwrap();
+        harden_windows(&file, false).unwrap();
+
+        let directory_output = run_icacls(&directory, &[]).unwrap();
+        let file_output = run_icacls(&file, &[]).unwrap();
+        let directory_acl = String::from_utf8_lossy(&directory_output.stdout);
+        let file_acl = String::from_utf8_lossy(&file_output.stdout);
+        assert!(!directory_acl.contains("(I)"));
+        assert!(directory_acl.contains("(OI)(CI)(F)"));
+        assert!(!file_acl.contains("(I)"));
+        assert!(file_acl.contains("(F)"));
+        assert!(!file_acl.contains("Everyone"));
+
+        let _ = fs::remove_file(file);
+        let _ = fs::remove_dir(directory);
     }
 }
