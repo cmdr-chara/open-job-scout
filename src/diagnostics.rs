@@ -1,8 +1,11 @@
-use std::{fs, path::Path};
+#[cfg(unix)]
+use std::fs;
+use std::path::Path;
 
 use rusqlite::Connection;
+use serde::Serialize;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Diagnostic {
     pub level: &'static str,
     pub check: &'static str,

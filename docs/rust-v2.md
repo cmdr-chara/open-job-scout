@@ -1,6 +1,9 @@
 # Rust v2 rewrite
 
-The Rust rewrite lives on `rewrite/rust-v2` until behavioral parity is proven against the Python implementation on `main`.
+The native Rust implementation is now part of the repository alongside the
+Python compatibility package. Both runtimes use the same tracker schema v3;
+the Python implementation remains the behavioral reference for migration and
+parity checks.
 
 ## Current milestone
 
@@ -14,6 +17,20 @@ CSV ingestion is also native now: Rust parses JobSpy-compatible CSVs, sanitizes 
 
 The no-argument command opens the TUI. Scriptable tracker commands currently include `list`, `show`, `mark`, `note`, `history`, `import-csv`, `report`, `rerank`, `recheck`, `stats`, `export`, `doctor`, and `stale`.
 
+Structured output is available for the inspection commands:
+
+```powershell
+jobscout show JOB_ID --json
+jobscout history JOB_ID --json
+jobscout doctor --json
+jobscout export --format json --output jobs.json
+```
+
+`export JOBS.json` remains supported as a positional-output form. Build the
+native binary with `cargo build --locked --release` or install it with
+`cargo install --path . --locked`. The `uv`/Python package remains available
+for compatibility until a native package distribution is introduced.
+
 Inside the TUI:
 
 - arrow keys or `hjkl` navigate;
@@ -24,8 +41,12 @@ Inside the TUI:
 - `r`, `a`, `i`, `x`, `Shift+O`, and `c` update pipeline status;
 - `u` reloads the SQLite tracker.
 
-The temporary diagnostic workflows used during the port are removed; the branch is validated only by the permanent strict Rust workflow.
+The temporary diagnostic workflows used during the port are removed; both the
+Python CI workflow and the strict Rust workflow run on `main`.
 
-## Remaining parity work
+## Remaining release work
 
-First-party discovery providers, richer queue filters, background TUI search/recheck UX, release packaging, and migration/release validation remain before Rust replaces Python on `main`. The Python implementation remains the behavioral reference until that gate is crossed.
+The local Rust implementation and strict Linux workflow cover the current
+feature slice. Release follow-up still includes validation against real
+provider boards, realistic Python-created trackers, the Windows/macOS release
+matrix, and the remaining interactive UX edge cases.

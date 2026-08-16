@@ -9,7 +9,10 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
 
-use crate::model::{ApplicationStatus, Job, JobEvent, WorkMode};
+use crate::{
+    model::{ApplicationStatus, Job, JobEvent, WorkMode},
+    safety::{secure_private_directory, secure_private_file},
+};
 
 const SCHEMA_VERSION: i64 = 3;
 const SCHEMA: &str = r#"
@@ -196,7 +199,7 @@ impl Storage {
         let fingerprints = matching_fingerprints(&connection, identifier)?;
         let fingerprint = unique_fingerprint(identifier, &fingerprints)?;
         let mut statement = connection.prepare(
-            "SELECT event_type, old_value, new_value, note, created_at
+            "SELECT id, event_type, old_value, new_value, note, created_at
              FROM job_events
              WHERE job_fingerprint=?
              ORDER BY created_at DESC, id DESC
@@ -204,11 +207,12 @@ impl Storage {
         )?;
         let rows = statement.query_map(params![fingerprint, limit as i64], |row| {
             Ok(JobEvent {
-                event_type: row.get(0)?,
-                old_value: row.get(1)?,
-                new_value: row.get(2)?,
-                note: row.get(3)?,
-                created_at: row.get(4)?,
+                id: row.get(0)?,
+                event_type: row.get(1)?,
+                old_value: row.get(2)?,
+                new_value: row.get(3)?,
+                note: row.get(4)?,
+                created_at: row.get(5)?,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -373,18 +377,19 @@ impl Storage {
             .parent()
             .filter(|path| !path.as_os_str().is_empty())
         {
+            let was_missing = !parent.exists();
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
+            if was_missing {
+                secure_private_directory(parent)?;
+            }
         }
-        let existed = self.path.exists();
         let connection = Connection::open(&self.path)
             .with_context(|| format!("failed to open {}", self.path.display()))?;
         connection.busy_timeout(StdDuration::from_secs(5))?;
         connection.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;")?;
         migrate_schema(&connection)?;
-        if !existed {
-            secure_database_permissions(&self.path)?;
-        }
+        secure_database_permissions(&self.path)?;
         Ok(connection)
     }
 }
@@ -628,17 +633,16 @@ fn now_rfc3339() -> Result<String> {
     Ok(OffsetDateTime::now_utc().format(&Rfc3339)?)
 }
 
-#[cfg(unix)]
 fn secure_database_permissions(path: &Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    let mut permissions = fs::metadata(path)?.permissions();
-    permissions.set_mode(0o600);
-    fs::set_permissions(path, permissions)?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn secure_database_permissions(_path: &Path) -> Result<()> {
+    secure_private_file(path)?;
+    for suffix in ["-wal", "-shm"] {
+        let mut sidecar = path.as_os_str().to_os_string();
+        sidecar.push(suffix);
+        let sidecar = PathBuf::from(sidecar);
+        if sidecar.exists() {
+            secure_private_file(&sidecar)?;
+        }
+    }
     Ok(())
 }
 

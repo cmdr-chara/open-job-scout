@@ -3,12 +3,19 @@ use std::{fs, path::Path};
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
-use crate::model::Job;
+use crate::{
+    model::Job,
+    safety::{secure_private_directory, secure_private_file},
+};
 
 pub fn export_jobs(jobs: &[Job], output: &Path, format: &str) -> Result<()> {
     if let Some(parent) = output.parent().filter(|path| !path.as_os_str().is_empty()) {
+        let was_missing = !parent.exists();
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
+        if was_missing {
+            secure_private_directory(parent)?;
+        }
     }
     match format {
         "json" => {
@@ -17,6 +24,7 @@ pub fn export_jobs(jobs: &[Job], output: &Path, format: &str) -> Result<()> {
             body.push('\n');
             fs::write(output, body)
                 .with_context(|| format!("failed to write {}", output.display()))?;
+            secure_private_file(output)?;
         }
         "csv" => {
             let fields = [
@@ -62,6 +70,7 @@ pub fn export_jobs(jobs: &[Job], output: &Path, format: &str) -> Result<()> {
             }
             fs::write(output, body)
                 .with_context(|| format!("failed to write {}", output.display()))?;
+            secure_private_file(output)?;
         }
         other => bail!("unsupported export format: {other}; expected json or csv"),
     }
@@ -102,11 +111,17 @@ pub fn job_json(job: &Job) -> Value {
 }
 
 fn csv_value(value: &Value) -> String {
+    let formula_candidate = matches!(value, Value::String(_) | Value::Array(_) | Value::Object(_));
     let raw = match value {
         Value::Null => String::new(),
         Value::String(value) => value.clone(),
         Value::Array(_) | Value::Object(_) => serde_json::to_string(value).unwrap_or_default(),
         _ => value.to_string(),
+    };
+    let raw = if formula_candidate && raw.starts_with(['=', '+', '-', '@']) {
+        format!("'{raw}")
+    } else {
+        raw
     };
     if raw.contains([',', '"', '\n', '\r']) {
         format!("\"{}\"", raw.replace('"', "\"\""))
@@ -133,5 +148,11 @@ mod tests {
     fn csv_escapes_commas_and_quotes() {
         let value = Value::String("one, \"two\"".into());
         assert_eq!(csv_value(&value), "\"one, \"\"two\"\"\"");
+    }
+
+    #[test]
+    fn csv_neutralizes_formula_leading_text() {
+        assert_eq!(csv_value(&Value::String("=SUM(A1)".into())), "'=SUM(A1)");
+        assert_eq!(csv_value(&Value::Number((-42).into())), "-42");
     }
 }

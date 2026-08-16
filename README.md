@@ -72,6 +72,18 @@ uv tool install git+https://github.com/cmdr-chara/open-job-scout.git@v0.1.0
 jobscout init
 ```
 
+The repository also ships a native Rust binary with the same SQLite tracker
+schema. To build or install that runtime locally:
+
+```powershell
+cargo build --locked --release
+cargo install --path . --locked
+```
+
+The Python `uv` command remains supported for compatibility; the Rust binary
+is the native release target and is distributed separately in the tagged
+cross-platform release artifacts.
+
 The commands work in PowerShell, macOS, and Linux shells. OpenJobScout stores
 its configuration and data under `~/.openjobscout/` by default. On Unix-like
 systems newly initialized config and database files are restricted to the

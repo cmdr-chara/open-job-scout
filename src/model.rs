@@ -1,6 +1,7 @@
 use std::{fmt, str::FromStr};
 
 use ratatui::style::Color;
+use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ApplicationStatus {
@@ -228,8 +229,9 @@ impl Job {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct JobEvent {
+    pub id: i64,
     pub event_type: String,
     pub old_value: Option<String>,
     pub new_value: Option<String>,
