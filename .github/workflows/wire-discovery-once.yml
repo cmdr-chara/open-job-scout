@@ -1,0 +1,57 @@
+name: Wire discovery once
+
+on:
+  push:
+    branches:
+      - rewrite/rust-v2
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rewrite/rust-v2
+      - name: Wire search command and provider config
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/main.rs')
+          text = path.read_text()
+          if 'mod discovery;' not in text:
+              text = text.replace('mod diagnostics;\n', 'mod diagnostics;\nmod discovery;\n')
+          if 'mod providers;' not in text:
+              text = text.replace('mod model;\n', 'mod model;\nmod providers;\n')
+          command_anchor = '''    /// Open the interactive terminal application.\n    Ui,\n'''
+          search_command = '''    /// Open the interactive terminal application.\n    Ui,\n    /// Discover jobs directly from configured public ATS career APIs.\n    Search {\n        #[arg(long, default_value_t = 6)]\n        workers: usize,\n    },\n'''
+          if 'Commands::Search' not in text:
+              text = text.replace(command_anchor, search_command, 1)
+          dispatch_anchor = '        Commands::Ui => run_ui(storage),\n'
+          dispatch = '''        Commands::Ui => run_ui(storage),\n        Commands::Search { workers } => {\n            discovery::search(&storage, &config_path, workers).map(|_| ())\n        }\n'''
+          if 'discovery::search' not in text:
+              text = text.replace(dispatch_anchor, dispatch, 1)
+          test_anchor = '        let stats = Cli::try_parse_from(["jobscout", "stats"]).unwrap();\n'
+          search_test = '''        let search = Cli::try_parse_from(["jobscout", "search", "--workers", "4"]).unwrap();\n        assert!(matches!(search.command, Some(Commands::Search { workers: 4 })));\n        let stats = Cli::try_parse_from(["jobscout", "stats"]).unwrap();\n'''
+          if 'Some(Commands::Search { workers: 4 })' not in text:
+              text = text.replace(test_anchor, search_test, 1)
+          path.write_text(text)
+
+          config = Path('src/open_job_scout/default_config.toml')
+          source = config.read_text()
+          if '[providers]' not in source:
+              source = source.rstrip() + '''\n\n# Optional first-party public career boards used by the Rust native search.\n# Values are board/company identifiers, not full URLs.\n[providers]\ngreenhouse = []\nlever = []\nlever_eu = []\nashby = []\nrecruitee = []\n'''
+              config.write_text(source)
+          PY
+          cargo fmt --all
+          rm .github/workflows/wire-discovery-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/main.rs src/open_job_scout/default_config.toml .github/workflows/wire-discovery-once.yml
+          git commit -m "Wire native Rust provider discovery"
+          git push origin HEAD:rewrite/rust-v2
