@@ -96,7 +96,7 @@ pub fn report(storage: &Storage, output: Option<&Path>, limit: usize) -> Result<
 }
 
 fn report_name() -> Result<String> {
-    let timestamp = OffsetDateTime::now_utc().format(&format_description::parse(
+    let timestamp = OffsetDateTime::now_utc().format(&format_description::parse_borrowed::<3>(
         "[year][month][day]-[hour][minute][second]",
     )?)?;
     Ok(format!("openjobscout-{timestamp}.md"))

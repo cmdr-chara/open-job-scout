@@ -527,7 +527,7 @@ mod tests {
             &["title", "company", "job_url", "description"],
             &["Backend", "Example", "https://example.test/job", "Python"],
         );
-        save_jobs(&storage, &[job.clone()]).unwrap();
+        save_jobs(&storage, std::slice::from_ref(&job)).unwrap();
         storage
             .mark_job(&job.id, ApplicationStatus::Applied, None)
             .unwrap();
