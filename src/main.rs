@@ -7,6 +7,7 @@ mod ranking;
 mod storage;
 mod theme;
 mod ui;
+mod verification;
 
 use std::{io, path::PathBuf, process::Command as ProcessCommand, time::Duration};
 
@@ -79,6 +80,11 @@ enum Commands {
     },
     /// Recompute transparent ranking/filter diagnostics without network access.
     Rerank,
+    /// Re-verify tracked links and rerank without changing discovery timestamps.
+    Recheck {
+        #[arg(long, default_value_t = 6)]
+        workers: usize,
+    },
     /// Print tracker counts and score summary.
     Stats,
     /// Export the tracker in Python-compatible JSON or CSV fields.
@@ -127,6 +133,7 @@ fn main() -> Result<()> {
         }
         Commands::History { id, limit } => command_history(&storage, &id, limit),
         Commands::Rerank => command_rerank(&storage, &config_path),
+        Commands::Recheck { workers } => command_recheck(&storage, &config_path, workers),
         Commands::Stats => command_stats(&storage),
         Commands::Export {
             output,
@@ -227,6 +234,41 @@ fn command_rerank(storage: &Storage, config_path: &std::path::Path) -> Result<()
     let refreshed = storage.refresh_jobs(&jobs)?;
     println!("Reranked: {refreshed}");
     println!("Pass current discovery filters: {pass_filters}/{refreshed}");
+    println!("Discovery timestamps were not changed.");
+    Ok(())
+}
+
+fn command_recheck(
+    storage: &Storage,
+    config_path: &std::path::Path,
+    workers: usize,
+) -> Result<()> {
+    if workers == 0 {
+        bail!("workers must be at least 1");
+    }
+    let config = load_config(config_path)?;
+    let jobs = storage.load_jobs()?;
+    if jobs.is_empty() {
+        println!("No tracked jobs to recheck.");
+        return Ok(());
+    }
+    println!("Rechecking {} tracked job(s)…", jobs.len());
+    let mut refreshed = verification::verify_jobs(jobs, workers);
+    for job in &mut refreshed {
+        ranking::rank_job(job, &config);
+    }
+    let closed = refreshed
+        .iter()
+        .filter(|job| job.verification == "closed")
+        .count();
+    let unreachable = refreshed
+        .iter()
+        .filter(|job| job.verification == "unreachable")
+        .count();
+    let count = storage.refresh_jobs(&refreshed)?;
+    println!("Rechecked: {count}");
+    println!("Closed: {closed}");
+    println!("Unreachable: {unreachable}");
     println!("Discovery timestamps were not changed.");
     Ok(())
 }
@@ -489,6 +531,8 @@ mod tests {
         assert!(matches!(stats.command, Some(Commands::Stats)));
         let rerank = Cli::try_parse_from(["jobscout", "rerank"]).unwrap();
         assert!(matches!(rerank.command, Some(Commands::Rerank)));
+        let recheck = Cli::try_parse_from(["jobscout", "recheck", "--workers", "4"]).unwrap();
+        assert!(matches!(recheck.command, Some(Commands::Recheck { workers: 4 })));
         let export =
             Cli::try_parse_from(["jobscout", "export", "jobs.json", "--status", "new"]).unwrap();
         assert!(matches!(export.command, Some(Commands::Export { .. })));
