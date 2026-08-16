@@ -5,6 +5,8 @@ use std::path::Path;
 use rusqlite::Connection;
 use serde::Serialize;
 
+use crate::discovery;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Diagnostic {
     pub level: &'static str,
@@ -22,6 +24,28 @@ pub fn run(config_path: &Path, database_path: &Path) -> Vec<Diagnostic> {
         });
         if let Some(check) = permission_check(config_path, "config permissions") {
             checks.push(check);
+        }
+        match discovery::firecrawl_status(config_path) {
+            Ok((false, _)) => checks.push(Diagnostic {
+                level: "ok",
+                check: "Firecrawl",
+                message: "Optional Firecrawl discovery is disabled.".into(),
+            }),
+            Ok((true, true)) => checks.push(Diagnostic {
+                level: "ok",
+                check: "Firecrawl",
+                message: "Enabled and FIRECRAWL_API_KEY is present in the environment.".into(),
+            }),
+            Ok((true, false)) => checks.push(Diagnostic {
+                level: "error",
+                check: "Firecrawl",
+                message: "Enabled but FIRECRAWL_API_KEY is not set in the environment.".into(),
+            }),
+            Err(error) => checks.push(Diagnostic {
+                level: "error",
+                check: "Firecrawl",
+                message: format!("Invalid Firecrawl configuration: {error:#}"),
+            }),
         }
     } else {
         checks.push(Diagnostic {
