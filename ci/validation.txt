@@ -1,0 +1,24 @@
+===== fmt =====
+exit=1
+Diff in /home/runner/work/open-job-scout/open-job-scout/src/discovery.rs:1:
+-use std::{collections::HashSet, path::{Path, PathBuf}};
++use std::{
++    collections::HashSet,
++    path::{Path, PathBuf},
++};
+ 
+ use anyhow::{Result, bail};
+ use time::{OffsetDateTime, format_description};
+Diff in /home/runner/work/open-job-scout/open-job-scout/src/discovery.rs:5:
+ 
+ use crate::{
+     config::{expand_path, load_config},
+-    importing,
+-    providers,
+-    ranking,
+-    reporting,
++    importing, providers, ranking, reporting,
+     storage::Storage,
+     verification,
+ };
+STRICT_VALIDATION=FAILED
