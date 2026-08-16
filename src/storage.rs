@@ -215,6 +215,120 @@ impl Storage {
             .map_err(Into::into)
     }
 
+    pub fn refresh_jobs(&self, jobs: &[Job]) -> Result<usize> {
+        let mut connection = self.connect()?;
+        let transaction = connection.transaction()?;
+        let now = now_rfc3339()?;
+        let mut count = 0;
+        for job in jobs {
+            let before: Option<(String, String, bool, Option<String>)> = transaction
+                .query_row(
+                    "SELECT status, verification_status, status_manually_set, status_updated_at
+                     FROM jobs WHERE fingerprint=?",
+                    [&job.id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get::<_, i64>(2)? != 0,
+                            row.get(3)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            let Some((old_status, old_verification, status_manually_set, old_status_updated_at)) =
+                before
+            else {
+                bail!("tracked job disappeared during recheck: {}", job.short_id());
+            };
+
+            let mut next_status = old_status.clone();
+            if !status_manually_set {
+                if job.verification == "closed" {
+                    next_status = "closed".into();
+                } else if old_status == "closed" {
+                    next_status = "new".into();
+                }
+            }
+            let status_updated_at = if next_status != old_status {
+                Some(now.clone())
+            } else {
+                old_status_updated_at
+            };
+            let remote = job.remote.map(i64::from);
+            let reasons = serde_json::to_string(&job.reasons)?;
+            let concerns = serde_json::to_string(&job.concerns)?;
+            transaction.execute(
+                "UPDATE jobs SET
+                    remote=?,
+                    work_mode=?,
+                    salary_min=COALESCE(?, salary_min),
+                    salary_max=COALESCE(?, salary_max),
+                    currency=COALESCE(?, currency),
+                    salary_source=COALESCE(?, salary_source),
+                    description=?,
+                    posted_at=?,
+                    canonical_url=COALESCE(?, canonical_url),
+                    score=?,
+                    reasons=?,
+                    concerns=?,
+                    verification_status=?,
+                    verification_source=?,
+                    replacement_url=?,
+                    replacement_title=?,
+                    status=?,
+                    status_updated_at=?
+                 WHERE fingerprint=?",
+                params![
+                    remote,
+                    job.work_mode.as_str(),
+                    job.salary_min,
+                    job.salary_max,
+                    job.currency,
+                    job.salary_source,
+                    job.description,
+                    job.posted,
+                    job.canonical_url,
+                    job.score,
+                    reasons,
+                    concerns,
+                    job.verification,
+                    job.verification_source,
+                    job.replacement_url,
+                    job.replacement_title,
+                    next_status,
+                    status_updated_at,
+                    job.id,
+                ],
+            )?;
+            if old_verification != job.verification {
+                record_event(
+                    &transaction,
+                    &job.id,
+                    "verification",
+                    Some(&old_verification),
+                    Some(&job.verification),
+                    Some("manual recheck"),
+                    &now,
+                )?;
+            }
+            if old_status != next_status {
+                record_event(
+                    &transaction,
+                    &job.id,
+                    "status",
+                    Some(&old_status),
+                    Some(&next_status),
+                    Some("automatic verification recheck"),
+                    &now,
+                )?;
+            }
+            count += 1;
+        }
+        transaction.commit()?;
+        Ok(count)
+    }
+
     pub fn mark_stale_jobs(&self, stale_after_days: i64) -> Result<usize> {
         if stale_after_days < 1 {
             bail!("stale_after_days must be at least 1");
@@ -343,6 +457,10 @@ fn raw_job(row: &Row<'_>) -> RawJob {
             .get::<_, Option<String>>("location")
             .unwrap_or_default()
             .unwrap_or_default(),
+        remote: row
+            .get::<_, Option<i64>>("remote")
+            .unwrap_or_default()
+            .map(|value| value != 0),
         work_mode: row.get("work_mode").unwrap_or_else(|_| "unknown".into()),
         employment_type: row.get("employment_type").unwrap_or_default(),
         status: row.get("status").unwrap_or_else(|_| "new".into()),
@@ -394,6 +512,7 @@ fn job_from_raw(raw: RawJob) -> Result<Job> {
         title: raw.title,
         company: raw.company,
         location: raw.location,
+        remote: raw.remote,
         work_mode: WorkMode::from_str(&raw.work_mode).unwrap_or(WorkMode::Unknown),
         employment_type: raw.employment_type,
         status: ApplicationStatus::from_str(&raw.status).map_err(|error| anyhow::anyhow!(error))?,
@@ -426,6 +545,7 @@ struct RawJob {
     title: String,
     company: String,
     location: String,
+    remote: Option<bool>,
     work_mode: String,
     employment_type: Option<String>,
     status: String,
@@ -619,7 +739,35 @@ mod tests {
         assert_eq!(job.status, ApplicationStatus::New);
         assert!(!job.status_manually_set);
         assert_eq!(job.notes, "interesting team");
-        assert_eq!(storage.events(&id[..10], 10).unwrap()[0].event_type, "note");
+        assert_eq!(
+            storage.events(&id[..10], 10).unwrap()[0].event_type,
+            "note"
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn refresh_does_not_change_last_seen_and_reopens_automatic_closed_jobs() {
+        let path = temp_database("refresh");
+        let storage = Storage::open(&path).unwrap();
+        let id = insert_job(&storage);
+        let connection = storage.connect().unwrap();
+        connection
+            .execute(
+                "UPDATE jobs SET status='closed', verification_status='closed' WHERE fingerprint=?",
+                [&id],
+            )
+            .unwrap();
+        drop(connection);
+        let before = storage.find_job(&id).unwrap();
+        let mut refreshed = before.clone();
+        refreshed.verification = "verified".into();
+        refreshed.score = 97.0;
+        storage.refresh_jobs(&[refreshed]).unwrap();
+        let after = storage.find_job(&id).unwrap();
+        assert_eq!(after.status, ApplicationStatus::New);
+        assert_eq!(after.last_seen, before.last_seen);
+        assert_eq!(after.score, 97.0);
         let _ = fs::remove_file(path);
     }
 }
