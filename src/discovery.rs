@@ -18,8 +18,37 @@ use crate::{
     verification,
 };
 
+const DEFAULT_FIRECRAWL_EXCLUDES: &[&str] = &[
+    "linkedin.com",
+    "indeed.com",
+    "glassdoor.com",
+    "ziprecruiter.com",
+    "greenhouse.io",
+    "lever.co",
+    "ashbyhq.com",
+    "recruitee.com",
+];
+
+fn validate_firecrawl_filters(config: &firecrawl::FirecrawlConfig) -> Result<()> {
+    if config.include_domains.is_empty() || config.exclude_domains.is_empty() {
+        return Ok(());
+    }
+    let uses_default_exclusions = config
+        .exclude_domains
+        .iter()
+        .map(String::as_str)
+        .eq(DEFAULT_FIRECRAWL_EXCLUDES.iter().copied());
+    if !uses_default_exclusions {
+        bail!(
+            "[firecrawl].include_domains and custom exclude_domains are mutually exclusive"
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn firecrawl_status(config_path: &Path) -> Result<(bool, bool)> {
     let config = firecrawl::load(config_path)?;
+    validate_firecrawl_filters(&config)?;
     let key_present = env::var("FIRECRAWL_API_KEY")
         .ok()
         .is_some_and(|value| !value.trim().is_empty());
@@ -33,6 +62,7 @@ pub fn search(storage: &Storage, config_path: &Path, workers: usize) -> Result<P
     let config = load_config(config_path)?;
     let provider_config = providers::load_providers(config_path)?;
     let firecrawl_config = firecrawl::load(config_path)?;
+    validate_firecrawl_filters(&firecrawl_config)?;
     if provider_config.is_empty() && !firecrawl_config.enabled {
         bail!(
             "no discovery source is configured; add first-party [providers] board identifiers or explicitly enable [firecrawl]"
@@ -167,5 +197,24 @@ mod tests {
         let value = report_name().unwrap();
         assert!(value.starts_with("openjobscout-search-"));
         assert!(value.ends_with(".md"));
+    }
+
+    #[test]
+    fn custom_domain_filters_cannot_be_combined() {
+        let config = firecrawl::FirecrawlConfig {
+            include_domains: vec!["example.com".into()],
+            exclude_domains: vec!["other.example".into()],
+            ..firecrawl::FirecrawlConfig::default()
+        };
+        assert!(validate_firecrawl_filters(&config).is_err());
+    }
+
+    #[test]
+    fn allow_list_can_replace_the_default_exclusions() {
+        let config = firecrawl::FirecrawlConfig {
+            include_domains: vec!["example.com".into()],
+            ..firecrawl::FirecrawlConfig::default()
+        };
+        assert!(validate_firecrawl_filters(&config).is_ok());
     }
 }
