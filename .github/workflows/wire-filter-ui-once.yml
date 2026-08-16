@@ -1,0 +1,254 @@
+name: Wire filter UI once
+
+on:
+  push:
+    branches:
+      - rewrite/rust-v2
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rewrite/rust-v2
+      - name: Wire filter state and modal
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          main = Path('src/main.rs')
+          text = main.read_text()
+          if 'mod filtering;' not in text:
+              text = text.replace('mod exporting;\n', 'mod exporting;\nmod filtering;\n', 1)
+          main.write_text(text)
+
+          app = Path('src/app.rs')
+          text = app.read_text()
+          if 'filtering::QueueFilters' not in text:
+              text = text.replace(
+                  'use crate::{\n',
+                  'use crate::{\n    filtering::QueueFilters,\n',
+                  1,
+              )
+          if 'pub show_filters: bool' not in text:
+              text = text.replace(
+                  '    pub show_history: bool,\n',
+                  '    pub show_history: bool,\n    pub show_filters: bool,\n    pub filter_cursor: usize,\n    pub filters: QueueFilters,\n',
+                  1,
+              )
+          text = text.replace(
+              '            show_history: false,\n            history:',
+              '            show_history: false,\n            show_filters: false,\n            filter_cursor: 0,\n            filters: QueueFilters::default(),\n            history:',
+          )
+          # Replace visible_indices wholesale.
+          start = text.find('    pub fn visible_indices(&self) -> Vec<usize> {')
+          end = text.find('\n    pub fn selected_job(&self)', start)
+          if start == -1 or end == -1:
+              raise SystemExit('visible_indices region not found')
+          replacement = '''    pub fn visible_indices(&self) -> Vec<usize> {
+        let query = self.search_query.trim().to_lowercase();
+        let mut indices = self
+            .jobs
+            .iter()
+            .enumerate()
+            .filter(|(_, job)| self.matches_tab(job))
+            .filter(|(_, job)| self.filters.matches(job))
+            .filter(|(_, job)| query.is_empty() || job.search_blob().contains(&query))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        self.filters.sort_indices(&self.jobs, &mut indices);
+        indices
+    }
+'''
+          text = text[:start] + replacement + text[end:]
+          # Filter modal gets first modal priority.
+          if 'if self.show_filters {' not in text:
+              anchor = '        if self.show_help {\n'
+              block = '''        if self.show_filters {
+            self.handle_filter_key(key);
+            return;
+        }
+
+'''
+              if anchor not in text:
+                  raise SystemExit('show_help anchor not found')
+              text = text.replace(anchor, block + anchor, 1)
+          # Browse shortcut.
+          if "KeyCode::Char('f') => self.show_filters = true," not in text:
+              anchor = "            KeyCode::Char('?') => self.show_help = true,\n"
+              text = text.replace(
+                  anchor,
+                  anchor + "            KeyCode::Char('f') => self.show_filters = true,\n",
+                  1,
+              )
+          # Add modal handler before handle_browse_key.
+          if 'fn handle_filter_key(&mut self' not in text:
+              anchor = '    fn handle_browse_key(&mut self, key: KeyEvent) {\n'
+              handler = '''    fn handle_filter_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('f') => {
+                self.show_filters = false;
+            }
+            KeyCode::Char('c') => {
+                self.filters.clear();
+                self.selected = 0;
+                self.notice = Some("Filters cleared".into());
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.filter_cursor = (self.filter_cursor + 1).min(3);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.filter_cursor = self.filter_cursor.saturating_sub(1);
+            }
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.adjust_selected_filter(-1);
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.adjust_selected_filter(1);
+            }
+            _ => {}
+        }
+    }
+
+    fn adjust_selected_filter(&mut self, direction: i8) {
+        match self.filter_cursor {
+            0 => self.filters.adjust_min_score(direction),
+            1 => self.filters.cycle_work_mode(direction),
+            2 => self.filters.cycle_source(&self.jobs, direction),
+            3 => self.filters.sort = self.filters.sort.next(),
+            _ => {}
+        }
+        self.selected = 0;
+    }
+
+'''
+              if anchor not in text:
+                  raise SystemExit('browse key anchor not found')
+              text = text.replace(anchor, handler + anchor, 1)
+          app.write_text(text)
+
+          ui = Path('src/ui.rs')
+          text = ui.read_text()
+          # Render filter modal above normal content, below help/history if those are activated later.
+          if 'render_filters(frame, app' not in text:
+              anchor = '    if app.show_help {\n'
+              modal = '''    if app.show_filters {
+        render_filters(frame, app, centered_rect(68, 17, area));
+    }
+'''
+              if anchor not in text:
+                  raise SystemExit('help render anchor not found')
+              text = text.replace(anchor, modal + anchor, 1)
+          # List title shows active filter summary.
+          old = '''    let title = if app.search_query.is_empty() {
+        format!(" {} ", app.active_tab.label().to_uppercase())
+    } else {
+        format!(
+            " {} · /{} ",
+            app.active_tab.label().to_uppercase(),
+            app.search_query
+        )
+    };
+'''
+          if old in text:
+              new = '''    let mut title = if app.search_query.is_empty() {
+        format!(" {} ", app.active_tab.label().to_uppercase())
+    } else {
+        format!(
+            " {} · /{} ",
+            app.active_tab.label().to_uppercase(),
+            app.search_query
+        )
+    };
+    if app.filters.is_active() {
+        title = format!("{} · {} ", title.trim_end(), app.filters.summary());
+    }
+'''
+              text = text.replace(old, new, 1)
+          # Footer/help shortcuts.
+          if 'Span::styled(" filters   ", theme::muted()),' not in text:
+              anchor = '        Span::styled(" search   ", theme::muted()),\n'
+              text = text.replace(
+                  anchor,
+                  anchor + '        keycap("F"),\n        Span::styled(" filters   ", theme::muted()),\n',
+                  1,
+              )
+          if 'help_line("F", "Open queue filters"),' not in text:
+              anchor = '        help_line("/", "Search instantly"),\n'
+              text = text.replace(
+                  anchor,
+                  anchor + '        help_line("F", "Open queue filters"),\n',
+                  1,
+              )
+          # Add filter renderer before render_help.
+          if 'fn render_filters(' not in text:
+              anchor = 'fn render_help(frame: &mut Frame<'
+              index = text.find(anchor)
+              if index == -1:
+                  raise SystemExit('render_help anchor not found')
+              renderer = '''fn render_filters(frame: &mut Frame<'_>, app: &App, area: Rect) {
+    frame.render_widget(Clear, area);
+    let block = modal_block(" FILTERS ");
+    let rows = [
+        ("Minimum score", if app.filters.min_score == 0 { "Any".into() } else { format!("≥ {}", app.filters.min_score) }),
+        ("Work mode", app.filters.work_mode_label().to_string()),
+        ("Source", app.filters.source_label().to_string()),
+        ("Sort", app.filters.sort.label().to_string()),
+    ];
+    let mut lines = vec![
+        Line::from(Span::styled("Refine the current pipeline instantly", theme::heading())),
+        Line::from(""),
+    ];
+    for (index, (label, value)) in rows.into_iter().enumerate() {
+        let active = index == app.filter_cursor;
+        lines.push(Line::from(vec![
+            Span::styled(
+                if active { "› " } else { "  " },
+                Style::new().fg(theme::ACCENT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{label:<16}"),
+                if active { theme::heading() } else { theme::muted() },
+            ),
+            Span::styled(
+                format!("  ‹  {value}  ›"),
+                if active {
+                    Style::new().fg(theme::CYAN).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::new().fg(theme::TEXT)
+                },
+            ),
+        ]));
+    }
+    lines.extend([
+        Line::from(""),
+        Line::from(vec![
+            keycap("↑↓"), Span::styled(" select   ", theme::muted()),
+            keycap("←→"), Span::styled(" change   ", theme::muted()),
+            keycap("C"), Span::styled(" clear   ", theme::muted()),
+            keycap("Enter"), Span::styled(" done", theme::muted()),
+        ]),
+    ]);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).block(block).style(theme::surface()),
+        area,
+    );
+}
+
+'''
+              text = text[:index] + renderer + text[index:]
+          ui.write_text(text)
+          PY
+          cargo fmt --all
+          rm .github/workflows/wire-filter-ui-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/main.rs src/app.rs src/ui.rs .github/workflows/wire-filter-ui-once.yml
+          git commit -m "Add interactive TUI queue filters"
+          git push origin HEAD:rewrite/rust-v2
