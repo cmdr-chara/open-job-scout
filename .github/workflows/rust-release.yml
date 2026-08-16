@@ -55,7 +55,7 @@ jobs:
           "$hash  $name" | Set-Content "$name.sha256" -NoNewline
       - name: Upload Unix artifact
         if: runner.os != 'Windows'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openjobscout-${{ runner.os }}-${{ runner.arch }}
           path: |
@@ -64,7 +64,7 @@ jobs:
           if-no-files-found: error
       - name: Upload Windows artifact
         if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openjobscout-${{ runner.os }}-${{ runner.arch }}
           path: |
