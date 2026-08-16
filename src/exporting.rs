@@ -74,11 +74,7 @@ pub fn job_json(job: &Job) -> Value {
         "title": job.title,
         "company": job.company,
         "location": job.location,
-        "remote": match job.work_mode {
-            crate::model::WorkMode::Remote => Some(true),
-            crate::model::WorkMode::Onsite => Some(false),
-            _ => None,
-        },
+        "remote": job.remote,
         "work_mode": job.work_mode.as_str(),
         "employment_type": job.employment_type,
         "salary_min": job.salary_min,
@@ -130,6 +126,7 @@ mod tests {
         assert!(value.get("fingerprint").is_some());
         assert!(value.get("verification_status").is_some());
         assert!(value.get("reasons").unwrap().is_array());
+        assert_eq!(value.get("remote").unwrap(), &Value::Bool(true));
     }
 
     #[test]
