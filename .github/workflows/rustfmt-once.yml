@@ -1,0 +1,37 @@
+name: Rustfmt once
+
+on:
+  push:
+    branches:
+      - rewrite/rust-v2
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rewrite/rust-v2
+      - name: Surface location and format
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('src/main.rs')
+          text = path.read_text()
+          needle = '    let mut jobs = storage.load_jobs()?;\n'
+          replacement = '    println!("Configured search location: {}", config.search.location);\n    let mut jobs = storage.load_jobs()?;\n'
+          if replacement not in text:
+              text = text.replace(needle, replacement, 1)
+          path.write_text(text)
+          PY
+          cargo fmt --all
+          rm .github/workflows/rustfmt-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src .github/workflows/rustfmt-once.yml
+          git commit -m "Use configured search location"
+          git push origin HEAD:rewrite/rust-v2
