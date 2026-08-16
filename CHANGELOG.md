@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add an optional Firecrawl discovery source for employer-owned career sites, disabled by
+  default and gated by `FIRECRAWL_API_KEY`.
+- Keep JobSpy and the native Greenhouse, Lever, Ashby, and Recruitee APIs as the default
+  discovery paths while merging normalized Firecrawl jobs into the same local pipeline.
+- Add bounded Firecrawl web search, structured page scraping, exact-URL interaction
+  opt-in, source-isolated failures, URL safety checks, and zero-data-retention requests.
 - Filter tracked jobs by status, work mode, source, minimum score, and free-text query.
 - Sort queue views by score or most recently seen and display work mode in `list` output.
 - Add `jobscout stats` for pipeline, source, work-mode, salary, and top-new summaries.
