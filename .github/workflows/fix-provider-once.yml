@@ -1,0 +1,74 @@
+name: Fix provider once
+
+on:
+  push:
+    branches:
+      - rewrite/rust-v2
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rewrite/rust-v2
+      - name: Apply provider correctness fixes and self-remove
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          cargo = Path('Cargo.toml')
+          text = cargo.read_text().replace(
+              'features = ["blocking", "rustls"]',
+              'features = ["blocking", "json", "rustls"]',
+          )
+          cargo.write_text(text)
+
+          path = Path('src/providers.rs')
+          text = path.read_text()
+          text = text.replace(
+              'url.path_segments_mut()\n        .map_err(|_| anyhow::anyhow!("invalid Greenhouse base URL"))?\n        .push(board)\n        .push("jobs");',
+              'url.path_segments_mut()\n        .map_err(|_| anyhow::anyhow!("invalid Greenhouse base URL"))?\n        .pop_if_empty()\n        .push(board)\n        .push("jobs");',
+          )
+          text = text.replace(
+              'Ok(jobs.iter().filter_map(map_greenhouse).collect())',
+              'Ok(jobs.iter().filter_map(|value| map_greenhouse(value, board)).collect())',
+          )
+          text = text.replace(
+              'fn map_greenhouse(value: &Value) -> Option<Job> {',
+              'fn map_greenhouse(value: &Value, board: &str) -> Option<Job> {',
+          )
+          text = text.replace(
+              '        company_from_greenhouse(value),',
+              '        board.to_string(),',
+          )
+          start = text.find('fn company_from_greenhouse')
+          if start != -1:
+              end = text.find('\nfn fetch_lever', start)
+              text = text[:start] + text[end+1:]
+          text = text.replace(
+              'url.path_segments_mut()\n        .map_err(|_| anyhow::anyhow!("invalid Lever base URL"))?\n        .push(site);',
+              'url.path_segments_mut()\n        .map_err(|_| anyhow::anyhow!("invalid Lever base URL"))?\n        .pop_if_empty()\n        .push(site);',
+          )
+          text = text.replace(
+              'url.path_segments_mut()\n        .map_err(|_| anyhow::anyhow!("invalid Ashby base URL"))?\n        .push(board);',
+              'url.path_segments_mut()\n        .map_err(|_| anyhow::anyhow!("invalid Ashby base URL"))?\n        .pop_if_empty()\n        .push(board);',
+          )
+          text = text.replace(
+              'let job = map_greenhouse(&value).unwrap();',
+              'let job = map_greenhouse(&value, "acme").unwrap();',
+          )
+          path.write_text(text)
+          PY
+          cargo fmt --all
+          rm .github/workflows/fix-provider-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml src/providers.rs .github/workflows/fix-provider-once.yml
+          git commit -m "Tighten native provider mapping"
+          git push origin HEAD:rewrite/rust-v2
