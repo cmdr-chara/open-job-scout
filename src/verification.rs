@@ -3,7 +3,7 @@ use std::{
     fmt,
     io::Read,
     net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs},
-    sync::{Arc, Mutex, mpsc},
+    sync::{Arc, Mutex, OnceLock, mpsc},
     thread,
     time::Duration,
 };
@@ -28,6 +28,8 @@ const USER_AGENT: &str = "OpenJobScout/0.2 (+https://github.com/cmdr-chara/open-
 const MAX_HTML_BYTES: usize = 1_000_000;
 const MAX_JSON_BYTES: usize = 5_000_000;
 const MAX_REDIRECTS: usize = 10;
+const DNS_RESOLVER_WORKERS: usize = 4;
+const DNS_RESOLVER_QUEUE: usize = 8;
 const CLOSED_MARKERS: &[&str] = &[
     "job not found",
     "job is no longer available",
@@ -109,6 +111,7 @@ impl Ats {
 pub(crate) enum FetchError {
     Unsafe(String),
     Transport(String),
+    DnsTimeout,
     Http(u16),
     TooLarge,
     Invalid(String),
@@ -120,6 +123,7 @@ impl fmt::Display for FetchError {
             Self::Unsafe(message) | Self::Transport(message) | Self::Invalid(message) => {
                 formatter.write_str(message)
             }
+            Self::DnsTimeout => formatter.write_str("DNS resolution timed out"),
             Self::Http(status) => write!(formatter, "HTTP {status}"),
             Self::TooLarge => formatter.write_str("response exceeds the allowed size"),
         }
@@ -145,6 +149,16 @@ struct ValidatedTarget {
     url: Url,
     domain: Option<String>,
     addresses: Vec<SocketAddr>,
+}
+
+struct DnsResolverPool {
+    sender: mpsc::SyncSender<DnsResolutionRequest>,
+}
+
+struct DnsResolutionRequest {
+    domain: String,
+    port: u16,
+    response: mpsc::Sender<Result<Vec<SocketAddr>, String>>,
 }
 
 #[cfg(test)]
@@ -272,15 +286,16 @@ fn resolve_url(value: &str, timeout_seconds: u64) -> ResolveResult {
     };
 
     for _ in 0..=MAX_REDIRECTS {
-        let target = match validate_parsed_target(current.clone()) {
-            Ok(target) => target,
-            Err(_) => {
-                return ResolveResult {
-                    status: PageStatus::Unreachable,
-                    resolved: original,
-                };
-            }
-        };
+        let target =
+            match validate_parsed_target(current.clone(), Duration::from_secs(timeout_seconds)) {
+                Ok(target) => target,
+                Err(_) => {
+                    return ResolveResult {
+                        status: PageStatus::Unreachable,
+                        resolved: original,
+                    };
+                }
+            };
         current = target.url.clone();
         let response = match send(&target, timeout_seconds, None) {
             Ok(response) => response,
@@ -363,7 +378,7 @@ fn resolve_url(value: &str, timeout_seconds: u64) -> ResolveResult {
 
 fn request_json(mut current: Url, timeout_seconds: u64) -> Result<Value, FetchError> {
     for _ in 0..=MAX_REDIRECTS {
-        let target = validate_parsed_target(current)?;
+        let target = validate_parsed_target(current, Duration::from_secs(timeout_seconds))?;
         current = target.url.clone();
         let response = send(&target, timeout_seconds, Some("application/json"))?;
         let status = response.status();
@@ -392,10 +407,13 @@ pub(crate) fn request_json_for_provider(url: Url) -> Result<Value, FetchError> {
 #[cfg(test)]
 fn validate_target(value: &str) -> Result<ValidatedTarget, FetchError> {
     let parsed = Url::parse(value).map_err(|error| FetchError::Unsafe(error.to_string()))?;
-    validate_parsed_target(parsed)
+    validate_parsed_target(parsed, Duration::from_secs(8))
 }
 
-fn validate_parsed_target(mut url: Url) -> Result<ValidatedTarget, FetchError> {
+fn validate_parsed_target(
+    mut url: Url,
+    dns_timeout: Duration,
+) -> Result<ValidatedTarget, FetchError> {
     if !matches!(url.scheme(), "http" | "https") {
         return Err(FetchError::Unsafe("target is not HTTP(S)".into()));
     }
@@ -440,10 +458,7 @@ fn validate_parsed_target(mut url: Url) -> Result<ValidatedTarget, FetchError> {
                 url.set_host(Some(&domain))
                     .map_err(|_| FetchError::Unsafe("invalid normalized host".into()))?;
             }
-            let mut addresses = (domain.as_str(), port)
-                .to_socket_addrs()
-                .map_err(|error| FetchError::Unsafe(format!("DNS resolution failed: {error}")))?
-                .collect::<Vec<_>>();
+            let mut addresses = resolve_host_with_deadline(&domain, port, dns_timeout)?;
             addresses.sort_unstable();
             addresses.dedup();
             if addresses.is_empty() || addresses.iter().any(|address| !is_public_ip(address.ip())) {
@@ -458,6 +473,77 @@ fn validate_parsed_target(mut url: Url) -> Result<ValidatedTarget, FetchError> {
             })
         }
     }
+}
+
+fn resolve_host_with_deadline(
+    domain: &str,
+    port: u16,
+    timeout: Duration,
+) -> Result<Vec<SocketAddr>, FetchError> {
+    let pool = dns_resolver_pool()?;
+    let (sender, receiver) = mpsc::channel();
+    let request = DnsResolutionRequest {
+        domain: domain.to_owned(),
+        port,
+        response: sender,
+    };
+    pool.sender.try_send(request).map_err(|error| match error {
+        mpsc::TrySendError::Full(_) => FetchError::Transport("DNS resolver pool is busy".into()),
+        mpsc::TrySendError::Disconnected(_) => {
+            FetchError::Transport("DNS resolver pool is unavailable".into())
+        }
+    })?;
+    receive_dns_result(receiver, timeout)
+}
+
+fn receive_dns_result(
+    receiver: mpsc::Receiver<Result<Vec<SocketAddr>, String>>,
+    timeout: Duration,
+) -> Result<Vec<SocketAddr>, FetchError> {
+    match receiver.recv_timeout(timeout) {
+        Ok(Ok(addresses)) => Ok(addresses),
+        Ok(Err(error)) => Err(FetchError::Unsafe(format!(
+            "DNS resolution failed: {error}"
+        ))),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(FetchError::DnsTimeout),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err(FetchError::Transport("DNS resolver worker stopped".into()))
+        }
+    }
+}
+
+fn dns_resolver_pool() -> Result<&'static DnsResolverPool, FetchError> {
+    static POOL: OnceLock<Result<DnsResolverPool, String>> = OnceLock::new();
+
+    POOL.get_or_init(|| {
+        let (sender, receiver) = mpsc::sync_channel::<DnsResolutionRequest>(DNS_RESOLVER_QUEUE);
+        let receiver = Arc::new(Mutex::new(receiver));
+        for index in 0..DNS_RESOLVER_WORKERS {
+            let receiver = Arc::clone(&receiver);
+            thread::Builder::new()
+                .name(format!("jobscout-dns-{index}"))
+                .spawn(move || {
+                    loop {
+                        let request = match receiver.lock() {
+                            Ok(receiver) => receiver.recv(),
+                            Err(_) => return,
+                        };
+                        let Ok(request) = request else {
+                            return;
+                        };
+                        let result = (request.domain.as_str(), request.port)
+                            .to_socket_addrs()
+                            .map(|addresses| addresses.collect::<Vec<_>>())
+                            .map_err(|error| error.to_string());
+                        let _ = request.response.send(result);
+                    }
+                })
+                .map_err(|error| format!("failed to start DNS resolver worker: {error}"))?;
+        }
+        Ok(DnsResolverPool { sender })
+    })
+    .as_ref()
+    .map_err(|error| FetchError::Transport(error.clone()))
 }
 
 fn is_public_ip(address: IpAddr) -> bool {
@@ -966,6 +1052,17 @@ mod tests {
             assert!(!is_safe_public_url(value), "{value} should be rejected");
         }
         assert!(is_safe_public_url("https://[2606:4700:4700::1111]/"));
+    }
+
+    #[test]
+    fn dns_resolution_wait_is_bounded() {
+        use std::time::Instant;
+
+        let (_sender, receiver) = mpsc::channel::<Result<Vec<SocketAddr>, String>>();
+        let started = Instant::now();
+        let result = receive_dns_result(receiver, Duration::from_millis(20));
+        assert!(matches!(result, Err(FetchError::DnsTimeout)));
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[test]
