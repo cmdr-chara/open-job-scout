@@ -179,9 +179,12 @@ class FirecrawlClient:
             "timeout": settings.timeout_seconds * 1000,
             "ignoreInvalidURLs": True,
         }
+        # Firecrawl's includeDomains/excludeDomains options are mutually exclusive.
+        # A user-provided allow-list therefore takes precedence over the default
+        # job-board/ATS exclusions.
         if settings.include_domains:
             payload["includeDomains"] = list(settings.include_domains)
-        if settings.exclude_domains:
+        elif settings.exclude_domains:
             payload["excludeDomains"] = list(settings.exclude_domains)
         response = self._request("POST", "/search", payload)
         data = response.get("data")
@@ -263,7 +266,7 @@ def settings_from_config(config: Mapping[str, Any]) -> FirecrawlSettings:
             raise ValueError(f"Config value [firecrawl].{key} contains a blank item.")
         return cleaned
 
-    return FirecrawlSettings(
+    settings = FirecrawlSettings(
         enabled=boolean("enabled", False),
         search_enabled=boolean("search_enabled", True),
         search_limit_per_term=integer("search_limit_per_term", 8, 1, 50),
@@ -275,6 +278,11 @@ def settings_from_config(config: Mapping[str, Any]) -> FirecrawlSettings:
         timeout_seconds=integer("timeout_seconds", 45, 5, 300),
         zero_data_retention=boolean("zero_data_retention", True),
     )
+    if settings.include_domains and settings.exclude_domains != DEFAULT_EXCLUDE_DOMAINS:
+        raise ValueError(
+            "Config values [firecrawl].include_domains and exclude_domains are mutually exclusive."
+        )
+    return settings
 
 
 def discover_firecrawl(
