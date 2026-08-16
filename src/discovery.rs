@@ -75,7 +75,10 @@ pub fn search(storage: &Storage, config_path: &Path, workers: usize) -> Result<P
     }
 
     if successful_sources == 0 && !errors.is_empty() {
-        bail!("all configured discovery sources failed: {}", errors.join("; "));
+        bail!(
+            "all configured discovery sources failed: {}",
+            errors.join("; ")
+        );
     }
 
     let discovered = jobs.len();
