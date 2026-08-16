@@ -5,6 +5,7 @@ mod discovery;
 mod exporting;
 mod identity;
 mod importing;
+mod migration;
 mod model;
 mod providers;
 mod ranking;

@@ -58,7 +58,10 @@ pub fn reconcile_existing_ids(storage: &Storage, jobs: &mut [Job]) -> Result<usi
 mod tests {
     use super::*;
     use crate::{importing, model::demo_jobs};
-    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn canonical_url_reuses_existing_python_style_identity() {
@@ -91,7 +94,8 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("openjobscout-reconcile-ambiguous-{unique}.sqlite3"));
+        let path =
+            std::env::temp_dir().join(format!("openjobscout-reconcile-ambiguous-{unique}.sqlite3"));
         let storage = Storage::open(&path).unwrap();
         let mut first = demo_jobs().remove(0);
         first.id = "a".repeat(64);
@@ -105,7 +109,8 @@ mod tests {
 
         let mut candidate = first.clone();
         candidate.id = "c".repeat(64);
-        let changed = reconcile_existing_ids(&storage, std::slice::from_mut(&mut candidate)).unwrap();
+        let changed =
+            reconcile_existing_ids(&storage, std::slice::from_mut(&mut candidate)).unwrap();
         assert_eq!(changed, 0);
         assert_eq!(candidate.id, "c".repeat(64));
         let _ = fs::remove_file(path);
