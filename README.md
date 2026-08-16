@@ -24,6 +24,8 @@ receiving your CV, notes, or search history.
 - Local SQLite database; no account required.
 - Transparent keyword scoring, never presented as an "ATS score".
 - Search through JobSpy or import an existing CSV; each source fails independently.
+- Optional Firecrawl discovery for public employer careers sites, disabled by default
+  and enabled only with `FIRECRAWL_API_KEY`.
 - Conservative `remote`, `hybrid`, `onsite`, or `unknown` classification.
 - Link and public ATS verification, with employer-published compensation when
   an ATS exposes it as structured data.
@@ -47,7 +49,7 @@ receiving your CV, notes, or search history.
 - `stats` summarizes the pipeline, source mix, work modes, salary coverage, and
   highest-ranked new jobs.
 - `doctor` checks local configuration, SQLite integrity/schema, filesystem
-  permissions, writable report storage, source safety, and JobSpy availability.
+  permissions, writable report storage, source safety, and discovery dependencies.
 - No automatic applications.
 
 ## Demo
@@ -115,6 +117,35 @@ Run the first search:
 ```powershell
 jobscout search
 ```
+
+### Optional: search employer career sites with Firecrawl
+
+The normal workflow does not need Firecrawl. To add it as a complementary source,
+export the API key and enable the existing config section:
+
+```powershell
+$env:FIRECRAWL_API_KEY = "fc-..."
+```
+
+```toml
+[firecrawl]
+enabled = true
+search_enabled = true
+search_limit_per_term = 8
+max_scrapes = 16
+career_urls = []
+interact_urls = []
+include_domains = []
+timeout_seconds = 45
+zero_data_retention = true
+```
+
+OpenJobScout keeps JobSpy and the native Greenhouse, Lever, Ashby, and Recruitee API
+paths; Firecrawl results are normalized and enter the same local ranking, verification,
+SQLite, and report pipeline. Browser interaction is exact-URL opt-in and is not used for
+login, CAPTCHA bypass, personal-data entry, or application submission. See
+[Optional Firecrawl discovery](docs/firecrawl.md) for domain filters, known career URLs,
+privacy boundaries, API usage, and failure behavior.
 
 ## The everyday review loop
 
@@ -324,13 +355,15 @@ jobscout doctor --json
 
 `doctor` validates the configuration, reports disabled/unsafe source choices,
 checks the SQLite schema and `PRAGMA quick_check`, warns about permissive Unix
-config/database file modes, checks report-directory writability, and confirms
-that JobSpy is importable. It does not perform a live job-board search.
+config/database file modes, checks report-directory writability, confirms that JobSpy is
+importable in the Python runtime, and reports a missing `FIRECRAWL_API_KEY` when the
+optional hosted source is enabled. It does not perform a live job-board search.
 
-JobSpy is installed as the default discovery engine. The tracker and CSV
-importer remain usable when a particular job board is unavailable.
-The Indeed adapter is temporarily disabled because its current upstream
-implementation does not verify TLS certificates; see [SECURITY.md](SECURITY.md).
+JobSpy is installed as the default Python discovery engine. The native Rust search uses
+configured first-party ATS providers. The tracker and CSV importer remain usable when a
+particular job board is unavailable. The Indeed adapter is temporarily disabled because
+its current upstream implementation does not verify TLS certificates; see
+[SECURITY.md](SECURITY.md).
 
 For every option, see the annotated
 [full configuration template](examples/config.example.toml).
@@ -340,6 +373,7 @@ troubleshooting, read:
 
 - [Getting started](docs/getting-started.md)
 - [Guida introduttiva in italiano](docs/getting-started.it.md)
+- [Optional Firecrawl discovery](docs/firecrawl.md)
 
 ## Install for development
 
@@ -393,11 +427,12 @@ them beside the repository: that directory is ignored by Git. OpenJobScout does
 not submit a CV or an application.
 
 Discovery and verification do make network requests to the job boards you
-configure and to public job or ATS URLs in the results. `recheck` performs only
-the latter verification requests. `open` launches the chosen URL in your local
-default browser. Those services receive the requests they normally receive from
-your network connection; review their terms and privacy notices before using
-them.
+configure and to public job or ATS URLs in the results. When Firecrawl is explicitly
+enabled, the configured search terms/location and selected public career/job URLs are
+also sent to Firecrawl; the local tracker, CV, application history, and notes are not.
+`recheck` performs only the existing verification requests. `open` launches the chosen
+URL in your local default browser. Review the relevant services' terms and privacy
+notices before using them.
 
 ## Scoring
 
