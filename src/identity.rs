@@ -88,7 +88,11 @@ mod tests {
     #[test]
     fn fingerprint_matches_python_reference_vector() {
         assert_eq!(
-            job_fingerprint(" Example Labs ", "Backend  Engineer", "HTTPS://Jobs.Example/123"),
+            job_fingerprint(
+                " Example Labs ",
+                "Backend  Engineer",
+                "HTTPS://Jobs.Example/123"
+            ),
             "6056ca5dc9816e1f9ee02bab55f7ec9ad4300ac562bb71669138de7e92558fa0"
         );
     }

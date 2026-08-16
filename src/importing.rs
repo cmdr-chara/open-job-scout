@@ -1,10 +1,4 @@
-use std::{
-    collections::HashMap,
-    fs,
-    path::Path,
-    sync::OnceLock,
-    time::Duration as StdDuration,
-};
+use std::{collections::HashMap, fs, path::Path, sync::OnceLock, time::Duration as StdDuration};
 
 use anyhow::{Context, Result};
 use csv::{ReaderBuilder, StringRecord};
@@ -237,8 +231,7 @@ fn row_to_job(headers: &StringRecord, record: &StringRecord) -> Result<Job> {
     let salary_min = first_float(&row, &["min_amount", "salary_min"]);
     let salary_max = first_float(&row, &["max_amount", "salary_max"]);
     let source = nonempty(
-        clean_text(row.get("site").copied())
-            .or_else_text(clean_text(row.get("source").copied())),
+        clean_text(row.get("site").copied()).or_else_text(clean_text(row.get("source").copied())),
     )
     .unwrap_or_else(|| "import".into());
     let posted = nonempty(
@@ -372,7 +365,14 @@ fn insert_event(
     connection.execute(
         "INSERT INTO job_events (job_fingerprint,event_type,old_value,new_value,note,created_at)
          VALUES (?,?,?,?,?,?)",
-        params![fingerprint, event_type, old_value, new_value, note, created_at],
+        params![
+            fingerprint,
+            event_type,
+            old_value,
+            new_value,
+            note,
+            created_at
+        ],
     )?;
     Ok(())
 }
@@ -463,13 +463,7 @@ mod tests {
     #[test]
     fn missing_placeholders_and_invalid_urls_are_cleaned() {
         let job = row(
-            &[
-                "title",
-                "company",
-                "job_url",
-                "job_url_direct",
-                "currency",
-            ],
+            &["title", "company", "job_url", "job_url_direct", "currency"],
             &[
                 "Backend",
                 "Example",

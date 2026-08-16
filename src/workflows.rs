@@ -1,13 +1,14 @@
-use std::{collections::HashSet, path::{Path, PathBuf}};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Result, bail};
 use time::{OffsetDateTime, format_description};
 
 use crate::{
     config::{expand_path, load_config},
-    importing,
-    ranking,
-    reporting,
+    importing, ranking, reporting,
     storage::Storage,
     verification,
 };
@@ -82,7 +83,11 @@ pub fn report(storage: &Storage, output: Option<&Path>, limit: usize) -> Result<
     if limit == 0 {
         bail!("limit must be at least 1");
     }
-    let jobs = storage.load_jobs()?.into_iter().take(limit).collect::<Vec<_>>();
+    let jobs = storage
+        .load_jobs()?
+        .into_iter()
+        .take(limit)
+        .collect::<Vec<_>>();
     let output = match output {
         Some(path) => path.to_path_buf(),
         None => std::env::current_dir()?.join(report_name()?),
