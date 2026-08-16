@@ -1,0 +1,34 @@
+name: Classify validation once
+
+on:
+  push:
+    branches:
+      - rewrite/rust-v2
+
+permissions:
+  contents: write
+
+jobs:
+  classify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: rewrite/rust-v2
+      - name: Classify compact result and self-remove
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f ci/validation.txt
+          if grep -q 'STRICT_VALIDATION=GREEN' ci/validation.txt; then
+            mv ci/validation.txt ci/VALIDATION_GREEN
+          else
+            mv ci/validation.txt ci/VALIDATION_FAILED
+          fi
+          rm .github/workflows/classify-validation-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Classify Rust milestone validation"
+          git push origin HEAD:rewrite/rust-v2
