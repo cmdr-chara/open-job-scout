@@ -52,14 +52,18 @@ impl ProvidersConfig {
             .iter()
             .cloned()
             .map(ProviderTask::Greenhouse)
-            .chain(self.lever.iter().cloned().map(|site| ProviderTask::Lever {
-                site,
-                eu: false,
-            }))
-            .chain(self.lever_eu.iter().cloned().map(|site| ProviderTask::Lever {
-                site,
-                eu: true,
-            }))
+            .chain(
+                self.lever
+                    .iter()
+                    .cloned()
+                    .map(|site| ProviderTask::Lever { site, eu: false }),
+            )
+            .chain(
+                self.lever_eu
+                    .iter()
+                    .cloned()
+                    .map(|site| ProviderTask::Lever { site, eu: true }),
+            )
             .chain(self.ashby.iter().cloned().map(ProviderTask::Ashby))
             .chain(self.recruitee.iter().cloned().map(ProviderTask::Recruitee))
             .collect()
@@ -123,24 +127,32 @@ pub fn discover(
     }
 
     let count = tasks.len();
-    let queue = Arc::new(Mutex::new(VecDeque::from_iter(tasks.into_iter().enumerate())));
+    let queue = Arc::new(Mutex::new(VecDeque::from_iter(
+        tasks.into_iter().enumerate(),
+    )));
     let (sender, receiver) = mpsc::channel();
     let worker_count = workers.min(count).max(1);
     thread::scope(|scope| {
         for _ in 0..worker_count {
             let queue = Arc::clone(&queue);
             let sender = sender.clone();
-            scope.spawn(move || loop {
-                let item = queue.lock().expect("provider queue poisoned").pop_front();
-                let Some((index, task)) = item else {
-                    break;
-                };
-                let label = task.label();
-                let result = fetch_task(&task)
-                    .map(|jobs| jobs.into_iter().filter(|job| matches_terms(job, terms)).collect())
-                    .map_err(|error| format!("{label}: {error:#}"));
-                if sender.send((index, result)).is_err() {
-                    break;
+            scope.spawn(move || {
+                loop {
+                    let item = queue.lock().expect("provider queue poisoned").pop_front();
+                    let Some((index, task)) = item else {
+                        break;
+                    };
+                    let label = task.label();
+                    let result = fetch_task(&task)
+                        .map(|jobs| {
+                            jobs.into_iter()
+                                .filter(|job| matches_terms(job, terms))
+                                .collect()
+                        })
+                        .map_err(|error| format!("{label}: {error:#}"));
+                    if sender.send((index, result)).is_err() {
+                        break;
+                    }
                 }
             });
         }
@@ -172,7 +184,9 @@ fn validate(config: &ProvidersConfig) -> Result<()> {
     ] {
         for value in values {
             if !valid_token(value) {
-                bail!("invalid [providers].{kind} token {value:?}; use only letters, digits, '-' or '_'");
+                bail!(
+                    "invalid [providers].{kind} token {value:?}; use only letters, digits, '-' or '_'"
+                );
             }
         }
     }
@@ -208,7 +222,11 @@ fn get_json(url: Url) -> Result<Value> {
     let response = client()?.get(url.clone()).send()?;
     let status = response.status();
     if !status.is_success() {
-        bail!("{} returned HTTP {}", url.host_str().unwrap_or("provider"), status.as_u16());
+        bail!(
+            "{} returned HTTP {}",
+            url.host_str().unwrap_or("provider"),
+            status.as_u16()
+        );
     }
     Ok(response.json()?)
 }
@@ -217,6 +235,7 @@ fn fetch_greenhouse(board: &str) -> Result<Vec<Job>> {
     let mut url = Url::parse("https://api.greenhouse.io/v1/boards/")?;
     url.path_segments_mut()
         .map_err(|_| anyhow::anyhow!("invalid Greenhouse base URL"))?
+        .pop_if_empty()
         .push(board)
         .push("jobs");
     url.query_pairs_mut().append_pair("content", "true");
@@ -225,10 +244,13 @@ fn fetch_greenhouse(board: &str) -> Result<Vec<Job>> {
         .get("jobs")
         .and_then(Value::as_array)
         .context("Greenhouse response did not contain jobs[]")?;
-    Ok(jobs.iter().filter_map(map_greenhouse).collect())
+    Ok(jobs
+        .iter()
+        .filter_map(|value| map_greenhouse(value, board))
+        .collect())
 }
 
-fn map_greenhouse(value: &Value) -> Option<Job> {
+fn map_greenhouse(value: &Value, board: &str) -> Option<Job> {
     let title = text_field(value, "title")?;
     let url = text_field(value, "absolute_url")?;
     let location = value
@@ -240,22 +262,13 @@ fn map_greenhouse(value: &Value) -> Option<Job> {
         .unwrap_or_default();
     Some(base_job(
         title,
-        company_from_greenhouse(value),
+        board.to_string(),
         location,
         "greenhouse",
         url.clone(),
         Some(url),
         description,
     ))
-}
-
-fn company_from_greenhouse(value: &Value) -> String {
-    value
-        .get("departments")
-        .and_then(Value::as_array)
-        .and_then(|items| items.first())
-        .and_then(|department| text_field(department, "name"))
-        .unwrap_or_else(|| "Greenhouse employer".into())
 }
 
 fn fetch_lever(site: &str, eu: bool) -> Result<Vec<Job>> {
@@ -267,11 +280,17 @@ fn fetch_lever(site: &str, eu: bool) -> Result<Vec<Job>> {
     let mut url = Url::parse(base)?;
     url.path_segments_mut()
         .map_err(|_| anyhow::anyhow!("invalid Lever base URL"))?
+        .pop_if_empty()
         .push(site);
     url.query_pairs_mut().append_pair("mode", "json");
     let payload = get_json(url)?;
-    let jobs = payload.as_array().context("Lever response was not an array")?;
-    Ok(jobs.iter().filter_map(|value| map_lever(value, site)).collect())
+    let jobs = payload
+        .as_array()
+        .context("Lever response was not an array")?;
+    Ok(jobs
+        .iter()
+        .filter_map(|value| map_lever(value, site))
+        .collect())
 }
 
 fn map_lever(value: &Value, site: &str) -> Option<Job> {
@@ -315,6 +334,7 @@ fn fetch_ashby(board: &str) -> Result<Vec<Job>> {
     let mut url = Url::parse("https://api.ashbyhq.com/posting-api/job-board/")?;
     url.path_segments_mut()
         .map_err(|_| anyhow::anyhow!("invalid Ashby base URL"))?
+        .pop_if_empty()
         .push(board);
     url.query_pairs_mut()
         .append_pair("includeCompensation", "true");
@@ -323,7 +343,10 @@ fn fetch_ashby(board: &str) -> Result<Vec<Job>> {
         .get("jobs")
         .and_then(Value::as_array)
         .context("Ashby response did not contain jobs[]")?;
-    Ok(jobs.iter().filter_map(|value| map_ashby(value, board)).collect())
+    Ok(jobs
+        .iter()
+        .filter_map(|value| map_ashby(value, board))
+        .collect())
 }
 
 fn map_ashby(value: &Value, board: &str) -> Option<Job> {
@@ -394,8 +417,8 @@ fn map_recruitee(value: &Value, company: &str) -> Option<Job> {
             job.work_mode = WorkMode::Remote;
         }
     }
-    job.employment_type = text_field(value, "employment_type")
-        .or_else(|| text_field(value, "employmentType"));
+    job.employment_type =
+        text_field(value, "employment_type").or_else(|| text_field(value, "employmentType"));
     job.posted = text_field(value, "published_at")
         .or_else(|| text_field(value, "publishedAt"))
         .unwrap_or_default();
@@ -524,7 +547,8 @@ mod tests {
 
     #[test]
     fn provider_config_is_optional_and_validated() {
-        let parsed: ProviderFile = toml::from_str("[providers]\ngreenhouse=['acme']\nashby=['north-star']").unwrap();
+        let parsed: ProviderFile =
+            toml::from_str("[providers]\ngreenhouse=['acme']\nashby=['north-star']").unwrap();
         validate(&parsed.providers).unwrap();
         assert_eq!(parsed.providers.tasks().len(), 2);
         assert!(!valid_token("evil.example/path"));
@@ -539,7 +563,7 @@ mod tests {
             "content": "<p>Build APIs with <b>Rust</b>.</p>",
             "departments": [{"name": "Engineering"}]
         });
-        let job = map_greenhouse(&value).unwrap();
+        let job = map_greenhouse(&value, "acme").unwrap();
         assert_eq!(job.source, "greenhouse");
         assert_eq!(job.description, "Build APIs with Rust .");
         assert_eq!(job.canonical_url.as_deref(), Some(job.source_url.as_str()));
@@ -559,7 +583,10 @@ mod tests {
         });
         let job = map_lever(&value, "acme").unwrap();
         assert_eq!(job.source_url, "https://jobs.lever.co/acme/abc");
-        assert_eq!(job.canonical_url.as_deref(), Some("https://jobs.lever.co/acme/abc/apply"));
+        assert_eq!(
+            job.canonical_url.as_deref(),
+            Some("https://jobs.lever.co/acme/abc/apply")
+        );
         assert_eq!(job.work_mode, WorkMode::Remote);
         assert_eq!(job.salary_max, Some(65_000.0));
     }
