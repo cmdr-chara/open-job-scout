@@ -1,4 +1,7 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use regex::Regex;
@@ -13,7 +16,9 @@ pub fn write_markdown(jobs: &[Job], output: &Path) -> Result<PathBuf> {
     }
     let timestamp = OffsetDateTime::now_local()
         .unwrap_or_else(|_| OffsetDateTime::now_utc())
-        .format(&format_description::parse("[year]-[month]-[day] [hour]:[minute]")?)?;
+        .format(&format_description::parse(
+            "[year]-[month]-[day] [hour]:[minute]",
+        )?)?;
     let mut lines = vec![
         format!("# OpenJobScout report - {timestamp}"),
         String::new(),
@@ -32,12 +37,19 @@ pub fn write_markdown(jobs: &[Job], output: &Path) -> Result<PathBuf> {
             )
             .trim()
             .to_string();
-            if let Some(source) = job.salary_source.as_deref().filter(|value| !value.is_empty()) {
+            if let Some(source) = job
+                .salary_source
+                .as_deref()
+                .filter(|value| !value.is_empty())
+            {
                 value.push_str(&format!(" (source: {})", inline(source)));
             }
             value
         };
-        let canonical = job.canonical_url.as_deref().filter(|value| !value.is_empty());
+        let canonical = job
+            .canonical_url
+            .as_deref()
+            .filter(|value| !value.is_empty());
         let preferred = canonical.unwrap_or(&job.source_url);
         lines.extend([
             format!(
@@ -83,7 +95,11 @@ pub fn write_markdown(jobs: &[Job], output: &Path) -> Result<PathBuf> {
         if !job.notes.is_empty() {
             lines.push(format!("- Notes: {}", inline(&job.notes)));
         }
-        if let Some(replacement) = job.replacement_url.as_deref().filter(|value| !value.is_empty()) {
+        if let Some(replacement) = job
+            .replacement_url
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
             let title = job
                 .replacement_title
                 .as_deref()
@@ -112,7 +128,9 @@ fn remote_label(value: Option<bool>) -> &'static str {
 
 fn inline(value: &str) -> String {
     let text = whitespace_regex().replace_all(value, " ");
-    markdown_regex().replace_all(text.trim(), r"\$1").into_owned()
+    markdown_regex()
+        .replace_all(text.trim(), r"\$1")
+        .into_owned()
 }
 
 fn nonempty_inline(value: &str) -> Option<String> {
