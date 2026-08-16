@@ -3,6 +3,7 @@ mod config;
 mod diagnostics;
 mod exporting;
 mod model;
+mod ranking;
 mod storage;
 mod theme;
 mod ui;
@@ -12,7 +13,7 @@ use std::{io, path::PathBuf, process::Command as ProcessCommand, time::Duration}
 use anyhow::{Context, Result, bail};
 use app::App;
 use clap::{Parser, Subcommand};
-use config::{default_config_path, resolve_database_path};
+use config::{load_config, resolve_database_path, selected_config_path};
 use crossterm::{
     cursor::Show,
     event::{
@@ -76,6 +77,8 @@ enum Commands {
         #[arg(long, default_value_t = 25)]
         limit: usize,
     },
+    /// Recompute transparent ranking/filter diagnostics without network access.
+    Rerank,
     /// Print tracker counts and score summary.
     Stats,
     /// Export the tracker in Python-compatible JSON or CSV fields.
@@ -97,12 +100,9 @@ enum Commands {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    let config_path = selected_config_path(cli.config.as_deref())?;
     let database = resolve_database_path(cli.database.as_deref(), cli.config.as_deref())?;
     if matches!(cli.command, Some(Commands::Doctor)) {
-        let config_path = match cli.config {
-            Some(path) => config::expand_path(&path)?,
-            None => default_config_path()?,
-        };
         return command_doctor(&config_path, &database);
     }
 
@@ -126,6 +126,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Commands::History { id, limit } => command_history(&storage, &id, limit),
+        Commands::Rerank => command_rerank(&storage, &config_path),
         Commands::Stats => command_stats(&storage),
         Commands::Export {
             output,
@@ -208,6 +209,24 @@ fn command_history(storage: &Storage, id: &str, limit: usize) -> Result<()> {
             event.created_at, event.event_type, transition, note
         );
     }
+    Ok(())
+}
+
+fn command_rerank(storage: &Storage, config_path: &std::path::Path) -> Result<()> {
+    let config = load_config(config_path)?;
+    let mut jobs = storage.load_jobs()?;
+    let mut pass_filters = 0;
+    for job in &mut jobs {
+        let mut probe = job.clone();
+        if ranking::filter_job(&mut probe, &config).allowed {
+            pass_filters += 1;
+        }
+        ranking::rank_job(job, &config);
+    }
+    let refreshed = storage.refresh_jobs(&jobs)?;
+    println!("Reranked: {refreshed}");
+    println!("Pass current discovery filters: {pass_filters}/{refreshed}");
+    println!("Discovery timestamps were not changed.");
     Ok(())
 }
 
@@ -467,6 +486,8 @@ mod tests {
     fn operational_commands_parse() {
         let stats = Cli::try_parse_from(["jobscout", "stats"]).unwrap();
         assert!(matches!(stats.command, Some(Commands::Stats)));
+        let rerank = Cli::try_parse_from(["jobscout", "rerank"]).unwrap();
+        assert!(matches!(rerank.command, Some(Commands::Rerank)));
         let export =
             Cli::try_parse_from(["jobscout", "export", "jobs.json", "--status", "new"]).unwrap();
         assert!(matches!(export.command, Some(Commands::Export { .. })));
