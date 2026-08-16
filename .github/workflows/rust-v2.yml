@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - rewrite/rust-v2
+  pull_request:
   workflow_dispatch:
 
 permissions:

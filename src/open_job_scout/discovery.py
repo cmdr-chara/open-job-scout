@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from .firecrawl import discover_firecrawl, settings_from_config
 from .models import Job, job_dedup_key
 
 _MISSING_VALUES = {"", "<na>", "na", "nan", "nat", "none", "null"}
@@ -148,6 +149,7 @@ def discover(config: dict[str, Any]) -> list[Job]:
 
     collected: list[Job] = []
     failures: list[str] = []
+    warnings: list[str] = []
     completed = 0
     for term in settings["terms"]:
         for site in sites:
@@ -172,8 +174,29 @@ def discover(config: dict[str, Any]) -> list[Job]:
                 completed += 1
             except Exception as exc:  # One source must not discard successful sources.
                 failures.append(f"{site}/{term}: {type(exc).__name__}: {exc}")
-    if failures:
-        print("Some searches failed:", file=sys.stderr)
+
+    firecrawl_settings = settings_from_config(config)
+    if firecrawl_settings.enabled:
+        print("Searching Firecrawl corporate sources", file=sys.stderr, flush=True)
+        try:
+            batch = discover_firecrawl(config)
+            collected.extend(batch.jobs)
+            warnings.extend(f"firecrawl: {warning}" for warning in batch.warnings)
+            if batch.searches or batch.scrapes:
+                completed += 1
+            print(
+                "Firecrawl: "
+                f"searches={batch.searches}, scrapes={batch.scrapes}, "
+                f"interactions={batch.interactions}, jobs={len(batch.jobs)}",
+                file=sys.stderr,
+            )
+        except (RuntimeError, ValueError) as exc:
+            failures.append(f"firecrawl: {type(exc).__name__}: {exc}")
+
+    if failures or warnings:
+        print("Some discovery sources reported warnings or failures:", file=sys.stderr)
+        for warning in warnings:
+            print(f"- {warning}", file=sys.stderr)
         for failure in failures:
             print(f"- {failure}", file=sys.stderr)
     if not completed and failures:
