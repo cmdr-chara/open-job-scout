@@ -138,8 +138,7 @@ pub fn load_config(path: &Path) -> Result<Config> {
         .with_context(|| format!("failed to read config {}", path.display()))?;
     let config: Config = toml::from_str(&source)
         .with_context(|| format!("failed to parse config {}", path.display()))?;
-    validate_config(config)
-        .with_context(|| format!("invalid config {}", path.display()))
+    validate_config(config).with_context(|| format!("invalid config {}", path.display()))
 }
 
 pub fn resolve_database_path(
@@ -173,10 +172,7 @@ pub fn expand_path(path: &Path) -> Result<PathBuf> {
     if text == "~" {
         return home_dir();
     }
-    if let Some(rest) = text
-        .strip_prefix("~/")
-        .or_else(|| text.strip_prefix("~\\"))
-    {
+    if let Some(rest) = text.strip_prefix("~/").or_else(|| text.strip_prefix("~\\")) {
         return Ok(home_dir()?.join(rest));
     }
     if path.is_absolute() {
@@ -225,7 +221,10 @@ fn validate_config(config: Config) -> Result<Config> {
             &config.ranking.preferred_title_terms,
             "[ranking].preferred_title_terms",
         ),
-        (&config.ranking.preferred_skills, "[ranking].preferred_skills"),
+        (
+            &config.ranking.preferred_skills,
+            "[ranking].preferred_skills",
+        ),
         (&config.ranking.junior_signals, "[ranking].junior_signals"),
         (&config.ranking.concern_signals, "[ranking].concern_signals"),
     ] {
