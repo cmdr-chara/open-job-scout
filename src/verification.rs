@@ -147,6 +147,7 @@ struct ValidatedTarget {
     addresses: Vec<SocketAddr>,
 }
 
+#[cfg(test)]
 pub fn is_safe_public_url(value: &str) -> bool {
     validate_target(value).is_ok()
 }
@@ -384,6 +385,7 @@ fn request_json(mut current: Url, timeout_seconds: u64) -> Result<Value, FetchEr
     Err(FetchError::Invalid("too many redirects".into()))
 }
 
+#[cfg(test)]
 fn validate_target(value: &str) -> Result<ValidatedTarget, FetchError> {
     let parsed = Url::parse(value).map_err(|error| FetchError::Unsafe(error.to_string()))?;
     validate_parsed_target(parsed)
