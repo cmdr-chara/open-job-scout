@@ -4,9 +4,11 @@ The Rust rewrite lives on `rewrite/rust-v2` until behavioral parity is proven ag
 
 ## Current milestone
 
-The Ratatui application now opens the same SQLite schema v3 used by the Python tracker. It loads real tracked jobs, preserves manual-status ownership, writes durable status/note events, supports stale marking, and resolves the database path from the existing `[storage].database` config value.
+The Ratatui application opens the same SQLite schema v3 used by the Python tracker. It loads real tracked jobs, preserves nullable remote/work-mode information, preserves manual-status ownership, writes durable status/note/verification events, supports stale marking, and resolves the database path from the existing `[storage].database` config value.
 
-The no-argument command opens the TUI. Scriptable tracker commands currently include `list`, `show`, `mark`, `note`, `history`, and `stale`.
+The Rust config loader now validates the existing search/profile/filter/ranking/salary/storage structure. Transparent filtering and ranking have been ported, including required-vs-preferred experience handling, work-mode precedence, degree policy, salary rules, verification penalties, and the existing score weights. `rerank` recomputes local ranking metadata without changing discovery timestamps.
+
+The no-argument command opens the TUI. Scriptable tracker commands currently include `list`, `show`, `mark`, `note`, `history`, `rerank`, `stats`, `export`, `doctor`, and `stale`.
 
 Inside the TUI:
 
@@ -18,4 +20,6 @@ Inside the TUI:
 - `r`, `a`, `i`, `x`, `Shift+O`, and `c` update pipeline status;
 - `u` reloads the SQLite tracker.
 
-Discovery, verification, ranking, import/export, diagnostics, and release packaging remain to be ported before Rust replaces Python on `main`.
+## Remaining parity work
+
+Live verification/recheck, first-party discovery providers, CSV import, Markdown reports, richer queue filters, release packaging, and migration/release validation remain before Rust replaces Python on `main`. The Python implementation remains the behavioral reference until that gate is crossed.
