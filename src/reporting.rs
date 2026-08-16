@@ -16,7 +16,7 @@ pub fn write_markdown(jobs: &[Job], output: &Path) -> Result<PathBuf> {
     }
     let timestamp = OffsetDateTime::now_local()
         .unwrap_or_else(|_| OffsetDateTime::now_utc())
-        .format(&format_description::parse(
+        .format(&format_description::parse_borrowed::<3>(
             "[year]-[month]-[day] [hour]:[minute]",
         )?)?;
     let mut lines = vec![
