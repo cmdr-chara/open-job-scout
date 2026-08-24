@@ -1,0 +1,94 @@
+{
+  "fingerprints": [
+    {
+      "company": " Example Labs ",
+      "title": "Backend  Engineer",
+      "source_url": "HTTPS://Jobs.Example/123",
+      "expected": "6056ca5dc9816e1f9ee02bab55f7ec9ad4300ac562bb71669138de7e92558fa0"
+    },
+    {
+      "company": "ACME S.p.A.",
+      "title": "Junior\nDeveloper",
+      "source_url": "https://jobs.example.com/Role/ABC?ref=board",
+      "expected": "321e6bb3fcbde2a230bde1ace7881150a6f822e41c2a95108a8970bc353311c9"
+    },
+    {
+      "company": "Northstar Labs",
+      "title": "  Software\tEngineer I  ",
+      "source_url": "https://example.test/source/42",
+      "expected": "33765c012099a2becb04b67efd3791fb993b701a9f1e287df600d2d770560dcc"
+    }
+  ],
+  "urls": [
+    {
+      "input": "HTTPS://Jobs.AshbyHQ.com/Acme/abc/application/?utm_source=x&b=2&a=1#form",
+      "expected": "https://jobs.ashbyhq.com/Acme/abc?a=1&b=2"
+    },
+    {
+      "input": "https://Example.com/jobs/123/?ref=board&utm_medium=email&lang=en",
+      "expected": "https://example.com/jobs/123?lang=en"
+    },
+    {
+      "input": "https://example.com",
+      "expected": "https://example.com/"
+    },
+    {
+      "input": "ftp://example.com/job",
+      "expected": ""
+    },
+    {
+      "input": "not a url",
+      "expected": ""
+    }
+  ],
+  "work_modes": [
+    {
+      "title": "Backend Engineer",
+      "location": "Italy",
+      "description": "Fully remote within Italy",
+      "remote": null,
+      "work_mode": "unknown",
+      "expected": "remote"
+    },
+    {
+      "title": "Backend Engineer",
+      "location": "Milan",
+      "description": "Hybrid, two days per week in the office",
+      "remote": true,
+      "work_mode": "unknown",
+      "expected": "hybrid"
+    },
+    {
+      "title": "Backend Engineer",
+      "location": "Rome",
+      "description": "This role is not remote",
+      "remote": true,
+      "work_mode": "unknown",
+      "expected": "onsite"
+    },
+    {
+      "title": "Backend Engineer",
+      "location": "Italy",
+      "description": "Flexible schedule",
+      "remote": true,
+      "work_mode": "hybrid",
+      "expected": "hybrid"
+    },
+    {
+      "title": "Backend Engineer",
+      "location": "Turin",
+      "description": "Flexible schedule",
+      "remote": false,
+      "work_mode": "unknown",
+      "expected": "onsite"
+    },
+    {
+      "title": "Backend Engineer",
+      "location": "Italy",
+      "description": "Flexible schedule",
+      "remote": null,
+      "work_mode": "unknown",
+      "expected": "unknown"
+    }
+  ]
+}
