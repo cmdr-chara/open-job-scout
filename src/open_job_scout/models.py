@@ -41,7 +41,12 @@ def normalize_job_url(value: str | None) -> str:
     if not value:
         return ""
     parts = urlsplit(value.strip())
+    scheme = parts.scheme.lower()
+    if scheme not in {"http", "https"} or not parts.netloc:
+        return ""
     path = re.sub(r"/application/?$", "", parts.path.rstrip("/"), flags=re.IGNORECASE)
+    if not path:
+        path = "/"
     query = urlencode(
         sorted(
             (key, item)
@@ -49,7 +54,7 @@ def normalize_job_url(value: str | None) -> str:
             if key.lower() not in _TRACKING_QUERY_KEYS
         )
     )
-    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, query, ""))
+    return urlunsplit((scheme, parts.netloc.lower(), path, query, ""))
 
 
 def job_dedup_key(job: Job) -> str:

@@ -14,10 +14,15 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
-      - name: Check out rewrite branch
-        uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python parity runtime
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          python-version: "3.12"
 
       - name: Show Rust toolchain
         run: |
@@ -36,12 +41,44 @@ jobs:
       - name: Build release binary
         run: cargo build --locked --release
 
+      - name: Install Python compatibility runtime
+        run: uv sync --locked --extra dev
+
+      - name: Check runtime contract
+        run: uv run python scripts/check_runtime_contract.py
+
+      - name: Check Python/Rust interoperability
+        run: uv run python scripts/check_runtime_parity.py --binary target/release/jobscout
+
       - name: Show release size
         run: ls -lh target/release/jobscout
 
       - name: Upload preview binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openjobscout-rust-v2-linux-x64
           path: target/release/jobscout
           if-no-files-found: error
+
+  platform-builds:
+    name: Platform build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Show Rust toolchain
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Run tests
+        run: cargo test --locked --all-targets --all-features
+
+      - name: Build binary and targets
+        run: cargo build --locked --all-targets --all-features
