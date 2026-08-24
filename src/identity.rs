@@ -84,25 +84,50 @@ pub fn job_dedup_key(job: &Job) -> String {
 mod tests {
     use super::*;
     use crate::model::demo_jobs;
+    use serde::Deserialize;
 
-    #[test]
-    fn fingerprint_matches_python_reference_vector() {
-        assert_eq!(
-            job_fingerprint(
-                " Example Labs ",
-                "Backend  Engineer",
-                "HTTPS://Jobs.Example/123"
-            ),
-            "6056ca5dc9816e1f9ee02bab55f7ec9ad4300ac562bb71669138de7e92558fa0"
-        );
+    #[derive(Debug, Deserialize)]
+    struct ContractVectors {
+        fingerprints: Vec<FingerprintVector>,
+        urls: Vec<UrlVector>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct FingerprintVector {
+        company: String,
+        title: String,
+        source_url: String,
+        expected: String,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct UrlVector {
+        input: String,
+        expected: String,
+    }
+
+    fn contract_vectors() -> ContractVectors {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/runtime_contract_vectors.json"
+        ))
+        .unwrap()
     }
 
     #[test]
-    fn normalization_drops_tracking_and_application_suffix() {
-        let normalized = normalize_job_url(
-            "HTTPS://Jobs.AshbyHQ.com/Acme/abc/application/?utm_source=x&b=2&a=1#form",
-        );
-        assert_eq!(normalized, "https://jobs.ashbyhq.com/Acme/abc?a=1&b=2");
+    fn fingerprint_matches_shared_runtime_contract() {
+        for vector in contract_vectors().fingerprints {
+            assert_eq!(
+                job_fingerprint(&vector.company, &vector.title, &vector.source_url),
+                vector.expected
+            );
+        }
+    }
+
+    #[test]
+    fn url_normalization_matches_shared_runtime_contract() {
+        for vector in contract_vectors().urls {
+            assert_eq!(normalize_job_url(&vector.input), vector.expected);
+        }
     }
 
     #[test]

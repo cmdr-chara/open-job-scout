@@ -1,0 +1,5 @@
+package_name = "openjobscout"
+command_name = "jobscout"
+schema_version = 3
+python_version = "0.1.0"
+rust_version = "0.2.0-alpha.1"
