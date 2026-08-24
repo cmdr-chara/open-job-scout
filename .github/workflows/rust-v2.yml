@@ -63,7 +63,7 @@ jobs:
   platform-builds:
     name: Platform build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -80,5 +80,5 @@ jobs:
       - name: Run tests
         run: cargo test --locked --all-targets --all-features
 
-      - name: Build release binary
-        run: cargo build --locked --release
+      - name: Build binary and targets
+        run: cargo build --locked --all-targets --all-features
