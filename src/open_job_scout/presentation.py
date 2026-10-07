@@ -6,6 +6,15 @@ import textwrap
 from collections.abc import Mapping
 
 
+def terminal_text(value: object) -> str:
+    """Keep imported/provider text from emitting terminal control sequences."""
+    text = str(value or "")
+    return "".join(
+        character if character in "\n\t" or ord(character) >= 0x20 else "�"
+        for character in text
+    )
+
+
 def _value(row: Mapping, key: str, default: object = None) -> object:
     try:
         return row[key]
@@ -78,6 +87,8 @@ def format_job_detail(row: Mapping, *, full: bool = False) -> str:
     concerns = _decode_list(_value(row, "concerns", "[]"))
     url = preferred_job_url(row)
     source_url = preferred_job_url(row, source=True)
+    next_action_at = _value(row, "next_action_at")
+    next_action_note = _value(row, "next_action_note")
 
     lines = [
         f"{title} — {company}",
@@ -93,6 +104,8 @@ def format_job_detail(row: Mapping, *, full: bool = False) -> str:
         f"Posted:       {_value(row, 'posted_at') or 'not provided'}",
         f"Source:       {_value(row, 'source') or 'not provided'}",
         f"Last seen:    {_value(row, 'last_seen_at') or 'not provided'}",
+        f"Next action:  {next_action_at or 'not scheduled'}"
+        + (f" — {next_action_note}" if next_action_note else ""),
         "",
         f"URL: {url or 'not provided'}",
     ]
@@ -126,9 +139,10 @@ def format_job_detail(row: Mapping, *, full: bool = False) -> str:
             f"  jobscout open {fingerprint[:10]}",
             f"  jobscout mark {fingerprint[:10]} reviewed",
             f"  jobscout note {fingerprint[:10]} \"your note\"",
+            f"  jobscout follow-up {fingerprint[:10]} YYYY-MM-DD --note \"follow up\"",
             f"  jobscout history {fingerprint[:10]}",
         ]
     )
     if not full:
         lines.append(f"  jobscout show {fingerprint[:10]} --full")
-    return "\n".join(lines)
+    return terminal_text("\n".join(lines))

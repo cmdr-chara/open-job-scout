@@ -506,6 +506,8 @@ def _text(value: object, *, collapse: bool = True) -> str:
 def _public_http_url(value: object) -> bool:
     if not isinstance(value, str):
         return False
+    if any(character.isspace() or ord(character) < 0x20 for character in value):
+        return False
     try:
         parts = urllib.parse.urlsplit(value.strip())
     except ValueError:

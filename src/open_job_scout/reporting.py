@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import math
 import re
+import urllib.parse
 from collections.abc import Iterable, Mapping
 from datetime import datetime
 from pathlib import Path
@@ -29,7 +31,30 @@ def _inline(value: object) -> str:
 
 
 def _url(value: object) -> str:
-    return str(value or "").replace("<", "%3C").replace(">", "%3E")
+    text = str(value or "").strip()
+    if any(character.isspace() or ord(character) < 0x20 for character in text):
+        return "#"
+    try:
+        parts = urllib.parse.urlsplit(text)
+        hostname = parts.hostname
+    except ValueError:
+        return "#"
+    if (
+        parts.scheme.lower() not in {"http", "https"}
+        or not hostname
+        or parts.username
+        or parts.password
+    ):
+        return "#"
+    host = hostname.rstrip(".").lower()
+    if host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
+        return "#"
+    try:
+        if not ipaddress.ip_address(host).is_global:
+            return "#"
+    except ValueError:
+        pass
+    return text.replace("<", "%3C").replace(">", "%3E")
 
 
 def _amount(value: object) -> str:
@@ -88,6 +113,18 @@ def write_markdown(rows: Iterable[Mapping], output: Path) -> Path:
                 f"- Posted: {_inline(row['posted_at']) or 'not provided'}",
                 f"- Source: {_inline(row['source']) or 'not provided'}",
                 f"- Verification: {row['verification_status']}",
+                *(
+                    [
+                        f"- Next action: {_inline(row['next_action_at'])}"
+                        + (
+                            f" — {_inline(row['next_action_note'])}"
+                            if _value(row, "next_action_note")
+                            else ""
+                        )
+                    ]
+                    if _value(row, "next_action_at")
+                    else []
+                ),
                 f"- Reasons: {_decode_list(row['reasons']) or 'none'}",
                 f"- Concerns: {_decode_list(row['concerns']) or 'none'}",
                 f"- URL: <{_url(canonical_url or source_url)}>",

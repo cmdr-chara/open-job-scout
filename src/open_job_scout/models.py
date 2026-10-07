@@ -100,6 +100,8 @@ class Job:
     replacement_url: str | None = None
     replacement_title: str | None = None
     verification_source: str | None = None
+    next_action_at: str | None = None
+    next_action_note: str | None = None
 
     @property
     def fingerprint(self) -> str:
@@ -135,4 +137,6 @@ def job_from_record(record: Mapping[str, object]) -> Job:
         replacement_url=_record_value(record, "replacement_url"),
         replacement_title=_record_value(record, "replacement_title"),
         verification_source=_record_value(record, "verification_source"),
+        next_action_at=_record_value(record, "next_action_at"),
+        next_action_note=_record_value(record, "next_action_note"),
     )

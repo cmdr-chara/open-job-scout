@@ -178,6 +178,14 @@ fn job_list_item(job: &Job) -> ListItem<'_> {
         Span::styled(job.work_mode.label(), Style::new().fg(theme::MUTED)),
         Span::styled("  ·  ", Style::new().fg(theme::FAINT)),
         status_badge(job.status),
+        if let Some(action_date) = job.next_action_at.as_deref() {
+            Span::styled(
+                format!("  ·  due {action_date}"),
+                Style::new().fg(theme::YELLOW),
+            )
+        } else {
+            Span::raw("")
+        },
     ]);
     ListItem::new(vec![first, second])
 }
@@ -283,6 +291,20 @@ fn render_job_detail(frame: &mut Frame<'_>, job: Option<&Job>, area: Rect) {
             Line::from(""),
             Line::from(Span::styled("NOTES", theme::accent())),
             Line::from(terminal_text(&job.notes)),
+        ]);
+    }
+    if let Some(action_date) = job.next_action_at.as_deref() {
+        lines.extend([
+            Line::from(""),
+            Line::from(Span::styled("NEXT ACTION", theme::accent())),
+            Line::from(format!(
+                "{}{}",
+                terminal_text(action_date),
+                job.next_action_note
+                    .as_deref()
+                    .map(|note| format!(" — {}", terminal_text(note)))
+                    .unwrap_or_default()
+            )),
         ]);
     }
     lines.extend([

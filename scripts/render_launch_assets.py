@@ -77,7 +77,7 @@ def render_social_preview() -> Path:
 
     draw.rectangle((0, 0, 18, 640), fill=TEAL)
     draw.text((64, 48), "OpenJobScout", font=font(38, bold=True), fill=INK)
-    draw.text((350, 63), "v0.1.0", font=font(15, mono=True), fill=TEAL)
+    draw.text((350, 63), "v0.2.0", font=font(15, mono=True), fill=TEAL)
     draw.text((66, 94), "LOCAL JOB DISCOVERY AND TRACKING", font=font(14, mono=True), fill=TEAL)
     draw.line((64, 128, 653, 128), fill="#B8BCB9", width=2)
 
@@ -128,7 +128,7 @@ def demo_lines(stage: int) -> list[tuple[str, str]]:
     """Return exact terminal lines for an animation stage."""
     install = [
         ("$ uv tool install git+https://github.com/cmdr-chara/", TEAL),
-        ("  open-job-scout.git@v0.1.0", TEAL),
+        ("  open-job-scout.git@v0.2.0", TEAL),
     ]
     imported = [
         ("$ jobscout import-csv jobs.csv --no-verify", TEAL),

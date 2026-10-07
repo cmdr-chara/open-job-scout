@@ -73,3 +73,10 @@ def test_doctor_reports_missing_config(tmp_path: Path) -> None:
     assert len(checks) == 1
     assert checks[0].level == "error"
     assert checks[0].check == "configuration"
+
+
+def test_writable_parent_rejects_report_file(tmp_path: Path) -> None:
+    report_file = tmp_path / "reports"
+    report_file.write_text("not a directory", encoding="utf-8")
+
+    assert diagnostics._writable_parent(report_file) is None

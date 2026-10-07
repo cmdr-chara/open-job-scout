@@ -36,7 +36,9 @@ def _permission_check(path: Path, label: str) -> Diagnostic | None:
 
 
 def _writable_parent(path: Path) -> Path | None:
-    candidate = path if path.exists() and path.is_dir() else path.parent
+    if path.exists() and not path.is_dir():
+        return None
+    candidate = path if path.exists() else path.parent
     while not candidate.exists() and candidate != candidate.parent:
         candidate = candidate.parent
     return candidate if candidate.exists() and candidate.is_dir() else None

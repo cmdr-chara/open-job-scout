@@ -6,13 +6,15 @@ import shutil
 import sqlite3
 import sys
 import textwrap
+import urllib.parse
 import webbrowser
 from collections import Counter
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from . import __version__
 from .actions import add_note
+from .capture import capture_job
 from .config import DEFAULT_CONFIG, expand_path, initialize_config, load_config
 from .database import (
     VALID_STATUSES,
@@ -23,17 +25,25 @@ from .database import (
     mark_stale_jobs,
     refresh_jobs,
     save_jobs,
+    set_next_action,
 )
 from .diagnostics import run_diagnostics
 from .discovery import deduplicate, discover, import_csv
 from .exporting import write_export
 from .models import job_from_record
-from .presentation import format_job_detail, preferred_job_url
+from .presentation import format_job_detail, preferred_job_url, terminal_text
 from .ranking import filter_job, rank_job
 from .reporting import write_markdown
 from .review import run_review_session
-from .tracker import SORT_ORDERS, VALID_WORK_MODES, query_jobs, tracker_summary
-from .verification import verify_jobs
+from .tracker import (
+    SORT_ORDERS,
+    VALID_WORK_MODES,
+    due_actions,
+    query_jobs,
+    tracker_insights,
+    tracker_summary,
+)
+from .verification import is_safe_public_url, verify_jobs
 
 
 def storage_paths(config: dict) -> tuple[Path, Path]:
@@ -70,10 +80,26 @@ def _json_job(row: sqlite3.Row) -> dict:
     return payload
 
 
+def _json_rows(rows: list[sqlite3.Row]) -> list[dict]:
+    return [_json_job(row) for row in rows]
+
+
 def _open_row(row: sqlite3.Row, *, source: bool = False) -> str:
     url = preferred_job_url(row, source=source)
     if not url:
         raise LookupError("This job does not have a usable URL.")
+    try:
+        parsed = urllib.parse.urlsplit(url)
+    except ValueError as exc:
+        raise LookupError("Refusing to open a malformed job URL.") from exc
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or not is_safe_public_url(url)
+    ):
+        raise LookupError("Refusing to open a non-public HTTP(S) job URL.")
     if not webbrowser.open(url, new=2):
         raise RuntimeError(
             "The browser could not be opened. Copy the URL from `jobscout show ID` instead."
@@ -130,6 +156,29 @@ def cmd_import(args: argparse.Namespace) -> int:
     return _collect_and_save(import_csv(args.file.expanduser().resolve()), args)
 
 
+def cmd_capture(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    database, _ = storage_paths(config)
+    job = capture_job(
+        args.url,
+        title=args.title,
+        company=args.company,
+        location=args.location,
+    )
+    accepted, reason = filter_job(job, config)
+    if not accepted:
+        raise ValueError(f"Captured job was filtered out: {reason}")
+    rank_job(job, config)
+    save_jobs([job], database)
+    row = find_job(database, job.fingerprint[:10])
+    if args.json:
+        print(json.dumps(_json_job(row), ensure_ascii=False, indent=2))
+    else:
+        print(f"Captured: {job.title} — {job.company}")
+        print(format_job_detail(row))
+    return 0
+
+
 def _filtered_rows(args: argparse.Namespace, database: Path) -> list:
     return query_jobs(
         database,
@@ -148,22 +197,28 @@ def cmd_list(args: argparse.Namespace) -> int:
     database, _ = storage_paths(config)
     rows = _filtered_rows(args, database)
     if not rows:
+        if args.json:
+            print("[]")
+            return 0
         print("No jobs matched this view.")
         _tip("relax a filter, run `jobscout list`, or discover jobs with `jobscout search`")
+        return 0
+    if args.json:
+        print(json.dumps(_json_rows(rows), ensure_ascii=False, indent=2))
         return 0
     width = shutil.get_terminal_size((120, 24)).columns
     label_width = max(24, width - 41)
     print(f"{'ID':<10}  {'SCORE':>5}  {'STATUS':<9}  {'MODE':<7}  ROLE")
     for row in rows:
         label = textwrap.shorten(
-            f"{row['title']} - {row['company']}",
+            f"{terminal_text(row['title'])} - {terminal_text(row['company'])}",
             width=label_width,
             placeholder="...",
         )
         mode = row["work_mode"] or "unknown"
         print(
             f"{row['fingerprint'][:10]}  {row['score']:5.1f}  "
-            f"{row['status']:<9}  {mode:<7}  {label}"
+            f"{terminal_text(row['status']):<9}  {terminal_text(mode):<7}  {label}"
         )
     _tip("inspect with `jobscout show ID`, or jump straight to `jobscout next`")
     return 0
@@ -200,6 +255,58 @@ def cmd_note(args: argparse.Namespace) -> int:
     return 0
 
 
+def _action_date(value: str) -> str:
+    try:
+        return date.fromisoformat(value.strip()).isoformat()
+    except ValueError as exc:
+        raise ValueError("Follow-up date must use YYYY-MM-DD.") from exc
+
+
+def cmd_follow_up(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    database, _ = storage_paths(config)
+    if args.clear and args.date:
+        raise ValueError("Do not provide a date when using --clear.")
+    if not args.clear and not args.date:
+        raise ValueError("Provide YYYY-MM-DD or use --clear.")
+    action_date = None if args.clear else _action_date(args.date)
+    changed = set_next_action(database, args.id, action_date, args.note)
+    if not changed:
+        print("That follow-up is already recorded; nothing changed.")
+    elif action_date:
+        print(f"Scheduled follow-up for {args.id} on {action_date}.")
+    else:
+        print(f"Cleared follow-up for {args.id}.")
+    return 0
+
+
+def cmd_due(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    database, _ = storage_paths(config)
+    through = date.today() + timedelta(days=args.days)
+    rows = due_actions(database, through=through, limit=args.limit)
+    if args.json:
+        print(json.dumps(_json_rows(rows), ensure_ascii=False, indent=2))
+        return 0
+    if not rows:
+        print("No follow-up actions are due in this window.")
+        return 0
+    print(f"Follow-up actions due through {through.isoformat()}:")
+    for row in rows:
+        label = textwrap.shorten(
+            f"{terminal_text(row['title'])} - {terminal_text(row['company'])}",
+            width=72,
+            placeholder="...",
+        )
+        note = f" — {terminal_text(row['next_action_note'])}" if row["next_action_note"] else ""
+        print(f"{row['next_action_at']}  {row['fingerprint'][:10]}  {label}{note}")
+    _tip(
+        "open a job with `jobscout show ID`, then reschedule with "
+        "`jobscout follow-up ID YYYY-MM-DD`"
+    )
+    return 0
+
+
 def cmd_next(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     database, _ = storage_paths(config)
@@ -214,10 +321,16 @@ def cmd_next(args: argparse.Namespace) -> int:
         limit=1,
     )
     if not rows:
+        if args.json:
+            print("null")
+            return 0
         print("No new jobs matched your next-job filters.")
         _tip("run `jobscout search` or inspect other states with `jobscout list`")
         return 0
     row = rows[0]
+    if args.json:
+        print(json.dumps(_json_job(row), ensure_ascii=False, indent=2))
+        return 0
     print("Next job in your review queue:\n")
     print(format_job_detail(row, full=args.full))
     if args.open:
@@ -319,13 +432,17 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 def _format_counts(values: dict[str, int]) -> str:
-    return ", ".join(f"{label}={count}" for label, count in values.items()) or "none"
+    return ", ".join(f"{terminal_text(label)}={count}" for label, count in values.items()) or "none"
 
 
 def cmd_stats(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     database, _ = storage_paths(config)
     summary = tracker_summary(database)
+    insights = tracker_insights(database)
+    if args.json:
+        print(json.dumps({"summary": summary, "insights": insights}, ensure_ascii=False, indent=2))
+        return 0
     total = int(summary["total"])
     print(f"Tracked jobs: {total}")
     if not total:
@@ -336,15 +453,78 @@ def cmd_stats(args: argparse.Namespace) -> int:
     print(f"Status: {_format_counts(summary['statuses'])}")
     print(f"Work mode: {_format_counts(summary['work_modes'])}")
     print(f"Sources: {_format_counts(summary['sources'])}")
+    freshness = insights["freshness"]
+    funnel = insights["funnel"]
+    print(
+        "Freshness: "
+        f"seen_7d={freshness['seen_last_7_days']}, "
+        f"posted_7d={freshness['posted_last_7_days']}"
+    )
+    print(
+        "Funnel: "
+        f"review→apply={funnel['review_to_application_pct']:.1f}%, "
+        f"apply→interview={funnel['application_to_interview_pct']:.1f}%, "
+        f"interview→offer={funnel['interview_to_offer_pct']:.1f}%"
+    )
+    follow_ups = insights["follow_ups"]
+    print(
+        "Follow-ups: "
+        f"overdue={follow_ups['overdue']}, "
+        f"today={follow_ups['due_today']}, "
+        f"next_7d={follow_ups['due_next_7_days']}"
+    )
     top_new = summary["top_new"]
     if top_new:
         print("Top new:")
         for row in top_new:
             print(
                 f"  {row['fingerprint'][:10]}  {row['score']:5.1f}  "
-                f"{row['title']} - {row['company']}"
+                f"{terminal_text(row['title'])} - {terminal_text(row['company'])}"
             )
         _tip("run `jobscout next` to inspect the first one")
+    return 0
+
+
+def cmd_insights(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    database, _ = storage_paths(config)
+    insights = tracker_insights(database)
+    if args.json:
+        print(json.dumps(insights, ensure_ascii=False, indent=2))
+        return 0
+    print(f"Tracked jobs: {insights['total']}")
+    print(f"Average score: {insights['average_score']:.1f}")
+    print(f"Status: {_format_counts(insights['statuses'])}")
+    print(f"Verification: {_format_counts(insights['verification'])}")
+    print(f"Work mode: {_format_counts(insights['work_modes'])}")
+    print(f"Sources: {_format_counts(insights['sources'])}")
+    freshness = insights["freshness"]
+    funnel = insights["funnel"]
+    print(
+        "Freshness: "
+        f"seen_7d={freshness['seen_last_7_days']}, "
+        f"posted_7d={freshness['posted_last_7_days']}"
+    )
+    print(
+        "Funnel: "
+        f"review→apply={funnel['review_to_application_pct']:.1f}%, "
+        f"apply→interview={funnel['application_to_interview_pct']:.1f}%, "
+        f"interview→offer={funnel['interview_to_offer_pct']:.1f}%"
+    )
+    follow_ups = insights["follow_ups"]
+    print(
+        "Follow-ups: "
+        f"overdue={follow_ups['overdue']}, "
+        f"today={follow_ups['due_today']}, "
+        f"next_7d={follow_ups['due_next_7_days']}"
+    )
+    print("\nRecommended next actions:")
+    actions = insights["action_items"]
+    if actions:
+        for action in actions:
+            print(f"- {action['message']}")
+    else:
+        print("- No follow-up actions detected.")
     return 0
 
 
@@ -376,6 +556,13 @@ def positive_int(value: str) -> int:
     parsed = int(value)
     if parsed < 1:
         raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
+
+
+def nonnegative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be zero or greater")
     return parsed
 
 
@@ -528,6 +715,24 @@ Run `jobscout COMMAND --help` for command-specific options.""",
     )
     import_parser.set_defaults(handler=cmd_import)
 
+    capture_parser = subparsers.add_parser(
+        "capture",
+        help="Capture one public job page",
+        description=(
+            "Read public job-page metadata and JSON-LD into the local tracker. "
+            "No forms are submitted."
+        ),
+    )
+    add_config_argument(capture_parser)
+    capture_parser.add_argument("url", metavar="URL", help="public HTTP(S) job-page URL")
+    capture_parser.add_argument("--title", help="override an unrecognized job title")
+    capture_parser.add_argument("--company", help="override an unrecognized employer")
+    capture_parser.add_argument("--location", help="override the extracted location")
+    capture_parser.add_argument(
+        "--json", action="store_true", help="print the captured job as JSON"
+    )
+    capture_parser.set_defaults(handler=cmd_capture)
+
     list_parser = subparsers.add_parser(
         "list",
         aliases=["ls"],
@@ -536,6 +741,7 @@ Run `jobscout COMMAND --help` for command-specific options.""",
     )
     add_config_argument(list_parser)
     add_queue_arguments(list_parser, default_limit=20)
+    list_parser.add_argument("--json", action="store_true", help="print matching jobs as JSON")
     list_parser.set_defaults(handler=cmd_list)
 
     show_parser = subparsers.add_parser(
@@ -576,6 +782,43 @@ Run `jobscout COMMAND --help` for command-specific options.""",
     note_parser.add_argument("text", metavar="TEXT", help="note text")
     note_parser.set_defaults(handler=cmd_note)
 
+    follow_up_parser = subparsers.add_parser(
+        "follow-up",
+        help="Schedule or clear a follow-up action",
+        description="Keep a local next-action date and optional note for a tracked job.",
+    )
+    add_config_argument(follow_up_parser)
+    follow_up_parser.add_argument("id", metavar="ID", help="full or unambiguous short job ID")
+    follow_up_parser.add_argument(
+        "date",
+        nargs="?",
+        metavar="YYYY-MM-DD",
+        help="follow-up date (omit only when using --clear)",
+    )
+    follow_up_parser.add_argument("--note", help="what to do on the follow-up date")
+    follow_up_parser.add_argument(
+        "--clear", action="store_true", help="remove the scheduled action"
+    )
+    follow_up_parser.set_defaults(handler=cmd_follow_up)
+
+    due_parser = subparsers.add_parser(
+        "due",
+        help="List due follow-up actions",
+        description="Show overdue and upcoming local follow-up actions.",
+    )
+    add_config_argument(due_parser)
+    due_parser.add_argument(
+        "--days",
+        type=nonnegative_int,
+        default=0,
+        help="include actions due within this many additional days (default: 0)",
+    )
+    due_parser.add_argument(
+        "--limit", type=positive_int, default=20, help="maximum actions to show (default: 20)"
+    )
+    due_parser.add_argument("--json", action="store_true", help="print due jobs as JSON")
+    due_parser.set_defaults(handler=cmd_due)
+
     next_parser = subparsers.add_parser(
         "next",
         help="Show the next new job to review",
@@ -587,6 +830,7 @@ Run `jobscout COMMAND --help` for command-specific options.""",
     next_parser.add_argument(
         "--full", action="store_true", help="show the full description instead of a preview"
     )
+    next_parser.add_argument("--json", action="store_true", help="print the job as JSON")
     next_parser.set_defaults(handler=cmd_next)
 
     review_parser = subparsers.add_parser(
@@ -653,7 +897,7 @@ Run `jobscout COMMAND --help` for command-specific options.""",
         description="Export a Markdown snapshot from the local tracker.",
     )
     add_config_argument(report_parser)
-    add_queue_arguments(report_parser, default_limit=100)
+    add_queue_arguments(report_parser, default_limit=None)
     report_parser.add_argument(
         "--output", type=Path, metavar="PATH", help="write to this Markdown file"
     )
@@ -665,7 +909,19 @@ Run `jobscout COMMAND --help` for command-specific options.""",
         description="Show pipeline counts, work modes, sources, and top new jobs.",
     )
     add_config_argument(stats_parser)
+    stats_parser.add_argument("--json", action="store_true", help="print metrics as JSON")
     stats_parser.set_defaults(handler=cmd_stats)
+
+    insights_parser = subparsers.add_parser(
+        "insights",
+        help="Explain pipeline health and next actions",
+        description=(
+            "Summarize the local tracker funnel, freshness, source mix, and follow-up actions."
+        ),
+    )
+    add_config_argument(insights_parser)
+    insights_parser.add_argument("--json", action="store_true", help="print insights as JSON")
+    insights_parser.set_defaults(handler=cmd_insights)
 
     export_parser = subparsers.add_parser(
         "export",

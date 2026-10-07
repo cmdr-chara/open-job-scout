@@ -214,7 +214,9 @@ fn get_json(url: Url) -> Result<Value> {
 }
 
 fn fetch_greenhouse(board: &str) -> Result<Vec<Job>> {
-    let mut url = Url::parse("https://api.greenhouse.io/v1/boards/")?;
+    // Greenhouse's public job-board API lives on boards-api.greenhouse.io.
+    // api.greenhouse.io returns an authentication error for this endpoint.
+    let mut url = Url::parse("https://boards-api.greenhouse.io/v1/boards/")?;
     url.path_segments_mut()
         .map_err(|_| anyhow::anyhow!("invalid Greenhouse base URL"))?
         .pop_if_empty()
@@ -447,6 +449,8 @@ fn base_job(
         last_seen: String::new(),
         status_updated_at: None,
         status_manually_set: false,
+        next_action_at: None,
+        next_action_note: None,
         reasons: Vec::new(),
         concerns: Vec::new(),
         description,
