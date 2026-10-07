@@ -309,8 +309,7 @@ pub fn rank_job(job: &mut Job, config: &Config) {
         let freshness = ((config.ranking.freshness_window_days - days as f64)
             / config.ranking.freshness_window_days)
             .clamp(0.0, 1.0);
-        let bonus =
-            (config.ranking.freshness_bonus * freshness * 10.0).round_ties_even() / 10.0;
+        let bonus = (config.ranking.freshness_bonus * freshness * 10.0).round_ties_even() / 10.0;
         if bonus == 0.0 {
             return None;
         }

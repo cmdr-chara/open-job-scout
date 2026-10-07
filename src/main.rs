@@ -213,11 +213,8 @@ fn main() -> Result<()> {
             workers,
         } => workflows::import_csv(&storage, &config_path, &path, !no_verify, workers).map(|_| ()),
         Commands::Report { output, limit } => {
-            let report = workflows::report(
-                &storage,
-                output.as_deref(),
-                limit.unwrap_or(usize::MAX),
-            )?;
+            let report =
+                workflows::report(&storage, output.as_deref(), limit.unwrap_or(usize::MAX))?;
             println!("Report: {}", terminal_text(&report.display().to_string()));
             Ok(())
         }
@@ -342,9 +339,7 @@ fn command_due(storage: &Storage, days: u64, limit: usize, json: bool) -> Result
         bail!("limit must be at least 1");
     }
     let days = i64::try_from(days).map_err(|_| anyhow::anyhow!("days is too large"))?;
-    let through = (local_now() + TimeDuration::days(days))
-        .date()
-        .to_string();
+    let through = (local_now() + TimeDuration::days(days)).date().to_string();
     let jobs = storage
         .due_jobs(&through)?
         .into_iter()
@@ -485,9 +480,7 @@ fn command_stats(storage: &Storage, json: bool) -> Result<()> {
         let statuses = jobs.iter().fold(
             std::collections::BTreeMap::<String, usize>::new(),
             |mut counts, job| {
-                *counts
-                    .entry(job.status.as_str().to_string())
-                    .or_default() += 1;
+                *counts.entry(job.status.as_str().to_string()).or_default() += 1;
                 counts
             },
         );
@@ -501,7 +494,9 @@ fn command_stats(storage: &Storage, json: bool) -> Result<()> {
         let work_modes = jobs.iter().fold(
             std::collections::BTreeMap::<String, usize>::new(),
             |mut counts, job| {
-                *counts.entry(job.work_mode.as_str().to_string()).or_default() += 1;
+                *counts
+                    .entry(job.work_mode.as_str().to_string())
+                    .or_default() += 1;
                 counts
             },
         );
@@ -665,25 +660,20 @@ fn command_stats(storage: &Storage, json: bool) -> Result<()> {
     println!("Salary published: {salary_published}/{}", jobs.len());
     let seen_last_7_days = jobs
         .iter()
-        .filter(|job| {
-            ranking::age_days(&job.last_seen).is_some_and(|days| (0..=7).contains(&days))
-        })
+        .filter(|job| ranking::age_days(&job.last_seen).is_some_and(|days| (0..=7).contains(&days)))
         .count();
     let posted_last_7_days = jobs
         .iter()
-        .filter(|job| {
-            ranking::age_days(&job.posted).is_some_and(|days| (0..=7).contains(&days))
-        })
+        .filter(|job| ranking::age_days(&job.posted).is_some_and(|days| (0..=7).contains(&days)))
         .count();
     let (overdue_follow_ups, due_today, due_next_7_days) = follow_up_counts(&jobs)?;
-    let count_status = |status: ApplicationStatus| {
-        jobs.iter().filter(|job| job.status == status).count()
-    };
+    let count_status =
+        |status: ApplicationStatus| jobs.iter().filter(|job| job.status == status).count();
     let applied = count_status(ApplicationStatus::Applied)
         + count_status(ApplicationStatus::Interview)
         + count_status(ApplicationStatus::Offer);
-    let interviews = count_status(ApplicationStatus::Interview)
-        + count_status(ApplicationStatus::Offer);
+    let interviews =
+        count_status(ApplicationStatus::Interview) + count_status(ApplicationStatus::Offer);
     let offers = count_status(ApplicationStatus::Offer);
     let reviewed = count_status(ApplicationStatus::Reviewed)
         + count_status(ApplicationStatus::Rejected)

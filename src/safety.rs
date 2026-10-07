@@ -37,7 +37,10 @@ pub fn safe_http_url(value: &str) -> Option<String> {
     {
         return None;
     }
-    let host = parsed.host_str()?.trim_end_matches('.').to_ascii_lowercase();
+    let host = parsed
+        .host_str()?
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
     if host == "localhost"
         || host.ends_with(".localhost")
         || host.ends_with(".local")
