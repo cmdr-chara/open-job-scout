@@ -521,6 +521,7 @@ mod tests {
     #[test]
     fn blocked_title_terms_respect_word_boundaries() {
         let mut job = demo_jobs().remove(0);
+        job.posted.clear();
         job.title = "Senior Backend Engineer".into();
         assert!(!filter_job(&mut job, &config()).allowed);
         job.title = "Seniority Platform Engineer".into();
