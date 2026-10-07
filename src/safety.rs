@@ -56,10 +56,10 @@ pub fn safe_http_url(value: &str) -> Option<String> {
         return None;
     }
     let ip_host = host.trim_start_matches('[').trim_end_matches(']');
-    if let Ok(address) = ip_host.parse::<IpAddr>() {
-        if !is_public_ip(address) {
-            return None;
-        }
+    if let Ok(address) = ip_host.parse::<IpAddr>()
+        && !is_public_ip(address)
+    {
+        return None;
     }
     Some(parsed.to_string())
 }
