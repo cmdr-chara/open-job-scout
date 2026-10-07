@@ -34,7 +34,7 @@ use crossterm::{
 };
 use model::{ApplicationStatus, Job};
 use ratatui::{Terminal, backend::CrosstermBackend};
-use safety::{safe_browser_url, safe_http_url, terminal_text};
+use safety::{safe_browser_url, terminal_text};
 use storage::Storage;
 use time::{Duration as TimeDuration, OffsetDateTime, format_description};
 
