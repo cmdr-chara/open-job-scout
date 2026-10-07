@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-10-07
+
+- Add configurable freshness-aware ranking with an explicit score reason for recent listings,
+  mirrored in the Python and Rust runtimes.
+- Add local next-action follow-ups (`follow-up`/`due`) and a one-paste public URL capture
+  command that extracts job-page metadata without submitting application forms.
+- Add `jobscout insights` plus JSON output for list/next/stats so local scripts can consume
+  queue, funnel, freshness, verification, and follow-up metrics without scraping terminal text.
+- Coalesce salary, location, work-mode, and employment metadata when mirror listings are
+  deduplicated, preserving the richest local record.
+- Harden job-ID lookup, browser/report URLs, CSV formula exports, proxy handling, diagnostics,
+  and native Greenhouse discovery.
 - Add an optional Firecrawl discovery source for employer-owned career sites, disabled by
   default and gated by `FIRECRAWL_API_KEY`.
 - Keep JobSpy and the native Greenhouse, Lever, Ashby, and Recruitee APIs as the default
@@ -13,7 +25,8 @@
 - Add `jobscout stats` for pipeline, source, work-mode, salary, and top-new summaries.
 - Add filtered CSV and JSON exports for spreadsheets and local analysis.
 - Apply the richer queue filters to manually generated Markdown reports.
-- Upgrade the local database to schema v3 with durable per-job event history.
+- Upgrade the local database to schema v4 with durable per-job event history and
+  follow-up dates/notes.
 - Add `jobscout history` for discovery, status, verification, note, and migration events.
 - Add `jobscout recheck` to re-verify and re-rank tracked jobs without changing discovery
   timestamps; manual application states remain authoritative.

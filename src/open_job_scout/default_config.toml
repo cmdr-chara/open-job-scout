@@ -30,6 +30,10 @@ preferred_title_terms = ["software engineer", "backend", "python"]
 preferred_skills = ["python", "django", "fastapi", "postgresql", "docker"]
 junior_signals = ["junior", "graduate", "entry level", "new grad", "internship"]
 concern_signals = ["on-site only", "unpaid", "mandatory relocation"]
+# Give newly posted roles a transparent tie-breaking bonus. Set the bonus to 0
+# to keep ranking purely skills-based.
+freshness_window_days = 30
+freshness_bonus = 10
 
 [salary]
 # Salary is never estimated. These settings only use compensation published by the employer.

@@ -1,13 +1,13 @@
 # Rust v2 rewrite
 
 The native Rust implementation is now part of the repository alongside the
-Python compatibility package. Both runtimes use the same tracker schema v3;
+Python compatibility package. Both runtimes use the same tracker schema v4;
 the Python implementation remains the behavioral reference for migration and
 parity checks.
 
 ## Current milestone
 
-The Ratatui application opens the same SQLite schema v3 used by the Python tracker. It loads real tracked jobs, preserves nullable remote/work-mode information, preserves manual-status ownership, writes durable status/note/verification events, supports stale marking, and resolves the database path from the existing `[storage].database` config value.
+The Ratatui application opens the same SQLite schema v4 used by the Python tracker. It loads real tracked jobs, preserves nullable remote/work-mode information, preserves manual-status ownership, writes durable status/note/verification/next-action events, supports stale marking, and resolves the database path from the existing `[storage].database` config value.
 
 The Rust config loader validates the existing search/profile/filter/ranking/salary/storage structure. Transparent filtering and ranking have been ported, including required-vs-preferred experience handling, work-mode precedence, degree policy, salary rules, verification penalties, and the existing score weights. `rerank` recomputes local ranking metadata without changing discovery timestamps.
 
@@ -15,7 +15,7 @@ Live verification is implemented for employer/job URLs and the existing Greenhou
 
 CSV ingestion is also native now: Rust parses JobSpy-compatible CSVs, sanitizes descriptions, keeps source and employer URLs distinct, preserves nullable remote signals, derives the same SHA-256 source identity as Python, performs mirror deduplication, runs filtering/verification/ranking, upserts through the same discovery ownership rules, marks stale rows, and emits a Markdown report. Standalone Markdown reports and JSON/CSV tracker exports are available as well.
 
-The no-argument command opens the TUI. Scriptable tracker commands currently include `list`, `show`, `mark`, `note`, `history`, `import-csv`, `report`, `rerank`, `recheck`, `stats`, `export`, `doctor`, and `stale`.
+The no-argument command opens the TUI. Scriptable tracker commands currently include `list`, `show`, `mark`, `note`, `follow-up`, `due`, `history`, `import-csv`, `report`, `rerank`, `recheck`, `stats`, `export`, `doctor`, and `stale`.
 
 Structured output is available for the inspection commands:
 
@@ -23,6 +23,8 @@ Structured output is available for the inspection commands:
 jobscout show JOB_ID --json
 jobscout history JOB_ID --json
 jobscout doctor --json
+jobscout list --json
+jobscout stats --json
 jobscout export --format json --output jobs.json
 ```
 

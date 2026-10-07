@@ -5,7 +5,7 @@ use std::path::Path;
 use rusqlite::Connection;
 use serde::Serialize;
 
-use crate::discovery;
+use crate::{discovery, storage::SCHEMA_VERSION};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Diagnostic {
@@ -70,20 +70,24 @@ pub fn run(config_path: &Path, database_path: &Path) -> Vec<Diagnostic> {
     match Connection::open(database_path) {
         Ok(connection) => {
             match connection.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)) {
-                Ok(3) => checks.push(Diagnostic {
+                Ok(version) if version == SCHEMA_VERSION => checks.push(Diagnostic {
                     level: "ok",
                     check: "database schema",
-                    message: "Schema 3 is current and Python-compatible.".into(),
+                    message: format!("Schema {SCHEMA_VERSION} is current and Python-compatible."),
                 }),
-                Ok(version) if version > 3 => checks.push(Diagnostic {
+                Ok(version) if version > SCHEMA_VERSION => checks.push(Diagnostic {
                     level: "error",
                     check: "database schema",
-                    message: format!("Schema {version} is newer than supported schema 3."),
+                    message: format!(
+                        "Schema {version} is newer than supported schema {SCHEMA_VERSION}."
+                    ),
                 }),
                 Ok(version) => checks.push(Diagnostic {
                     level: "warn",
                     check: "database schema",
-                    message: format!("Schema {version} will migrate to schema 3 when opened."),
+                    message: format!(
+                        "Schema {version} will migrate to schema {SCHEMA_VERSION} when opened."
+                    ),
                 }),
                 Err(error) => checks.push(Diagnostic {
                     level: "error",

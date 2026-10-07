@@ -52,10 +52,17 @@ def run_review_session(
             if action in {"s", "skip", ""}:
                 break
             if action in {"o", "open"}:
-                output(f"Opened: {open_job(row)}")
+                try:
+                    output(f"Opened: {open_job(row)}")
+                except (LookupError, OSError, RuntimeError) as exc:
+                    output(f"Could not open job: {exc}")
                 continue
             if action in {"n", "note"}:
-                note = input_func("Note: ").strip()
+                try:
+                    note = input_func("Note: ").strip()
+                except EOFError:
+                    output("Input ended; leaving the review session.")
+                    return decisions
                 if not note:
                     output("No note added.")
                     continue

@@ -196,6 +196,21 @@ def rank_job(job: Job, config: dict[str, Any]) -> Job:
         concerns.append("listing could not be verified")
         score -= 15
 
+    # Fresh listings deserve a small, transparent tie-breaker.  Keep this
+    # configurable so users who prefer a purely skills-based queue can set the
+    # bonus to zero.  Unknown/future dates never receive a hidden penalty.
+    freshness_window = float(ranking.get("freshness_window_days", 30))
+    freshness_bonus = float(ranking.get("freshness_bonus", 10))
+    posted_age = age_days(job.posted_at)
+    freshness_reason = None
+    if freshness_window > 0 and freshness_bonus > 0 and posted_age is not None and posted_age >= 0:
+        freshness = max(0.0, min(1.0, (freshness_window - max(posted_age, 0)) / freshness_window))
+        bonus = round(freshness_bonus * freshness, 1)
+        if bonus:
+            score += bonus
+            age_label = "today" if posted_age == 0 else f"{posted_age}d old"
+            freshness_reason = f"fresh listing: {age_label} (+{bonus:g})"
+
     salary = config.get("salary", {})
     known_salary = job.salary_max if job.salary_max is not None else job.salary_min
     preferred_salary = float(salary.get("preferred_annual", 0))
@@ -228,6 +243,8 @@ def rank_job(job: Job, config: dict[str, Any]) -> Job:
         job.reasons.append(f"skills: {', '.join(skills)}")
     if junior:
         job.reasons.append(f"early-career signals: {', '.join(junior)}")
+    if freshness_reason:
+        job.reasons.append(freshness_reason)
     if job.work_mode == "remote":
         job.reasons.append("fully remote")
     if known_salary is not None:

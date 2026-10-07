@@ -39,6 +39,9 @@ preferred_title_terms = ["software engineer", "backend", "python"]
 preferred_skills = ["python", "django", "fastapi", "postgresql", "docker"]
 junior_signals = ["junior", "graduate", "entry level", "new grad", "internship"]
 concern_signals = ["on-site only", "unpaid", "mandatory relocation"]
+# Transparent recency tie-breaker for newly posted listings.
+freshness_window_days = 30
+freshness_bonus = 10
 
 [salary]
 # Only employer-published annual compensation is used; no salary is estimated.

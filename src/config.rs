@@ -64,6 +64,10 @@ pub struct RankingConfig {
     pub preferred_skills: Vec<String>,
     pub junior_signals: Vec<String>,
     pub concern_signals: Vec<String>,
+    #[serde(default = "default_freshness_window_days")]
+    pub freshness_window_days: f64,
+    #[serde(default = "default_freshness_bonus")]
+    pub freshness_bonus: f64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -230,6 +234,17 @@ fn validate_config(config: Config) -> Result<Config> {
     ] {
         validate_string_list(values, key, true, false)?;
     }
+    for (value, key) in [
+        (
+            config.ranking.freshness_window_days,
+            "[ranking].freshness_window_days",
+        ),
+        (config.ranking.freshness_bonus, "[ranking].freshness_bonus"),
+    ] {
+        if !value.is_finite() || value < 0.0 {
+            bail!("config value {key} must be a number >= 0");
+        }
+    }
 
     for (value, key) in [
         (config.salary.minimum_annual, "[salary].minimum_annual"),
@@ -305,6 +320,14 @@ fn default_unknown_policy() -> String {
 }
 
 fn default_preferred_bonus() -> f64 {
+    10.0
+}
+
+fn default_freshness_window_days() -> f64 {
+    30.0
+}
+
+fn default_freshness_bonus() -> f64 {
     10.0
 }
 

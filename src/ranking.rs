@@ -297,6 +297,34 @@ pub fn rank_job(job: &mut Job, config: &Config) {
         score -= 15.0;
     }
 
+    // Freshness is an explainable tie-breaker, never a hidden penalty. Missing
+    // or future-dated postings receive no bonus.
+    let freshness_reason = age_days(&job.posted).and_then(|days| {
+        if days < 0
+            || config.ranking.freshness_window_days <= 0.0
+            || config.ranking.freshness_bonus <= 0.0
+        {
+            return None;
+        }
+        let freshness = ((config.ranking.freshness_window_days - days as f64)
+            / config.ranking.freshness_window_days)
+            .clamp(0.0, 1.0);
+        let bonus = (config.ranking.freshness_bonus * freshness * 10.0).round_ties_even() / 10.0;
+        if bonus == 0.0 {
+            return None;
+        }
+        score += bonus;
+        let age_label = if days == 0 {
+            "today".to_string()
+        } else {
+            format!("{days}d old")
+        };
+        Some(format!(
+            "fresh listing: {age_label} (+{})",
+            compact_number(bonus)
+        ))
+    });
+
     let known_salary = job.salary_max.or(job.salary_min);
     if let Some(known_salary) = known_salary {
         if config.salary.preferred_annual > 0.0 && known_salary >= config.salary.preferred_annual {
@@ -333,6 +361,9 @@ pub fn rank_job(job: &mut Job, config: &Config) {
     if !junior.is_empty() {
         job.reasons
             .push(format!("early-career signals: {}", junior.join(", ")));
+    }
+    if let Some(reason) = freshness_reason {
+        job.reasons.push(reason);
     }
     if job.work_mode == WorkMode::Remote {
         job.reasons.push("fully remote".into());
@@ -448,6 +479,8 @@ mod tests {
                 preferred_skills: vec!["python".into(), "postgresql".into()],
                 junior_signals: vec!["junior".into(), "graduate".into()],
                 concern_signals: vec!["mandatory relocation".into()],
+                freshness_window_days: 30.0,
+                freshness_bonus: 10.0,
             },
             salary: SalaryConfig {
                 preferred_annual: 50_000.0,
@@ -488,6 +521,7 @@ mod tests {
     #[test]
     fn blocked_title_terms_respect_word_boundaries() {
         let mut job = demo_jobs().remove(0);
+        job.posted.clear();
         job.title = "Senior Backend Engineer".into();
         assert!(!filter_job(&mut job, &config()).allowed);
         job.title = "Seniority Platform Engineer".into();
@@ -508,6 +542,18 @@ mod tests {
         assert_eq!(job.score, 52.0);
         assert!(job.reasons.iter().any(|reason| reason.contains("backend")));
         assert!(job.reasons.iter().any(|reason| reason == "fully remote"));
+    }
+
+    #[test]
+    fn fresh_listing_receives_explainable_bonus() {
+        let mut job = demo_jobs().remove(0);
+        job.posted = OffsetDateTime::now_utc().date().to_string();
+        rank_job(&mut job, &config());
+        assert!(
+            job.reasons
+                .iter()
+                .any(|reason| reason.starts_with("fresh listing: today (+10"))
+        );
     }
 
     #[test]

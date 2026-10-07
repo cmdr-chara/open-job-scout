@@ -14,7 +14,7 @@ use crate::{
     safety::{secure_private_directory, secure_private_file},
 };
 
-const SCHEMA_VERSION: i64 = 3;
+pub(crate) const SCHEMA_VERSION: i64 = 4;
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS jobs (
     fingerprint TEXT PRIMARY KEY,
@@ -45,7 +45,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     status TEXT NOT NULL DEFAULT 'new',
     status_updated_at TEXT,
     status_manually_set INTEGER NOT NULL DEFAULT 0,
-    notes TEXT NOT NULL DEFAULT ''
+    notes TEXT NOT NULL DEFAULT '',
+    next_action_at TEXT,
+    next_action_note TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status_score ON jobs(status, score DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_last_seen ON jobs(last_seen_at DESC);
@@ -178,17 +180,88 @@ impl Storage {
             "UPDATE jobs SET notes=? WHERE fingerprint=?",
             params![next_notes, fingerprint],
         )?;
+        if next_notes != old_notes {
+            record_event(
+                &transaction,
+                &fingerprint,
+                "note",
+                None,
+                None,
+                Some(note),
+                &now,
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn set_next_action(
+        &self,
+        identifier: &str,
+        action_date: Option<&str>,
+        note: Option<&str>,
+    ) -> Result<bool> {
+        let note = note.map(str::trim).filter(|value| !value.is_empty());
+        if action_date.is_none() && note.is_some() {
+            bail!("a follow-up note requires a date");
+        }
+        let mut connection = self.connect()?;
+        let fingerprints = matching_fingerprints(&connection, identifier)?;
+        let fingerprint = unique_fingerprint(identifier, &fingerprints)?.to_string();
+        let transaction = connection.transaction()?;
+        let (old_date, old_note): (Option<String>, Option<String>) = transaction.query_row(
+            "SELECT next_action_at, next_action_note FROM jobs WHERE fingerprint=?",
+            [&fingerprint],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        // Rescheduling without a replacement note keeps the existing
+        // instruction; an explicit clear removes both date and note.
+        let next_note = if action_date.is_some() && note.is_none() {
+            old_note.as_deref()
+        } else {
+            note
+        };
+        if old_date.as_deref() == action_date && old_note.as_deref() == next_note {
+            return Ok(false);
+        }
+        let now = now_rfc3339()?;
+        transaction.execute(
+            "UPDATE jobs SET next_action_at=?, next_action_note=? WHERE fingerprint=?",
+            params![action_date, next_note, fingerprint],
+        )?;
+        let event_note = next_note.or_else(|| {
+            if action_date.is_some() {
+                Some("scheduled")
+            } else {
+                Some("cleared")
+            }
+        });
         record_event(
             &transaction,
             &fingerprint,
-            "note",
-            None,
-            None,
-            Some(note),
+            "next_action",
+            old_date.as_deref(),
+            action_date,
+            event_note,
             &now,
         )?;
         transaction.commit()?;
-        Ok(())
+        Ok(true)
+    }
+
+    pub fn due_jobs(&self, through: &str) -> Result<Vec<Job>> {
+        let connection = self.connect()?;
+        let mut statement = connection.prepare(
+            "SELECT * FROM jobs
+             WHERE next_action_at IS NOT NULL AND next_action_at <= ?
+             ORDER BY next_action_at ASC, score DESC, last_seen_at DESC",
+        )?;
+        let mut rows = statement.query([through])?;
+        let mut jobs = Vec::new();
+        while let Some(row) = rows.next()? {
+            jobs.push(job_from_row(row)?);
+        }
+        Ok(jobs)
     }
 
     pub fn events(&self, identifier: &str, limit: usize) -> Result<Vec<JobEvent>> {
@@ -444,6 +517,19 @@ fn migrate_schema(connection: &Connection) -> Result<()> {
         )?;
         connection.pragma_update(None, "user_version", 3)?;
     }
+    if version < 4 {
+        let columns = table_columns(connection, "jobs")?;
+        for (name, definition) in [("next_action_at", "TEXT"), ("next_action_note", "TEXT")] {
+            if !columns.iter().any(|column| column == name) {
+                connection
+                    .execute_batch(&format!("ALTER TABLE jobs ADD COLUMN {name} {definition};"))?;
+            }
+        }
+        connection.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_jobs_next_action_at ON jobs(next_action_at);",
+        )?;
+        connection.pragma_update(None, "user_version", 4)?;
+    }
     Ok(())
 }
 
@@ -497,6 +583,8 @@ fn raw_job(row: &Row<'_>) -> RawJob {
         last_seen: row.get("last_seen_at").unwrap_or_default(),
         status_updated_at: row.get("status_updated_at").unwrap_or_default(),
         status_manually_set: row.get::<_, i64>("status_manually_set").unwrap_or_default() != 0,
+        next_action_at: row.get("next_action_at").unwrap_or_default(),
+        next_action_note: row.get("next_action_note").unwrap_or_default(),
         reasons: row.get("reasons").unwrap_or_else(|_| "[]".into()),
         concerns: row.get("concerns").unwrap_or_else(|_| "[]".into()),
         description: row
@@ -538,6 +626,8 @@ fn job_from_raw(raw: RawJob) -> Result<Job> {
         last_seen: raw.last_seen,
         status_updated_at: raw.status_updated_at,
         status_manually_set: raw.status_manually_set,
+        next_action_at: raw.next_action_at,
+        next_action_note: raw.next_action_note,
         reasons: decode_list(&raw.reasons),
         concerns: decode_list(&raw.concerns),
         description: raw.description,
@@ -571,6 +661,8 @@ struct RawJob {
     last_seen: String,
     status_updated_at: Option<String>,
     status_manually_set: bool,
+    next_action_at: Option<String>,
+    next_action_note: Option<String>,
     reasons: String,
     concerns: String,
     description: String,
@@ -587,10 +679,19 @@ fn matching_fingerprints(connection: &Connection, identifier: &str) -> Result<Ve
         bail!("job ID must not be blank");
     }
     let mut statement = connection.prepare(
-        "SELECT fingerprint FROM jobs WHERE fingerprint LIKE ? ORDER BY fingerprint LIMIT 3",
+        "SELECT fingerprint FROM jobs WHERE fingerprint LIKE ? ESCAPE '\\' ORDER BY fingerprint LIMIT 3",
     )?;
-    let rows = statement.query_map([format!("{identifier}%")], |row| row.get(0))?;
+    let rows = statement.query_map([format!("{}%", escape_like_prefix(identifier))], |row| {
+        row.get(0)
+    })?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+fn escape_like_prefix(identifier: &str) -> String {
+    identifier
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 fn unique_fingerprint<'a>(identifier: &str, matches: &'a [String]) -> Result<&'a str> {
@@ -701,14 +802,14 @@ mod tests {
     }
 
     #[test]
-    fn new_database_uses_python_schema_version_three() {
+    fn new_database_uses_python_schema_version_four() {
         let path = temp_database("schema");
         let storage = Storage::open(&path).unwrap();
         let connection = storage.connect().unwrap();
         let version: i64 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
         let _ = fs::remove_file(path);
     }
 
@@ -744,6 +845,56 @@ mod tests {
         assert!(!job.status_manually_set);
         assert_eq!(job.notes, "interesting team");
         assert_eq!(storage.events(&id[..10], 10).unwrap()[0].event_type, "note");
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn follow_up_dates_persist_and_can_be_cleared() {
+        let path = temp_database("follow-up");
+        let storage = Storage::open(&path).unwrap();
+        let id = insert_job(&storage);
+        assert!(
+            storage
+                .set_next_action(&id[..10], Some("2026-08-20"), Some("email recruiter"))
+                .unwrap()
+        );
+        let job = storage.find_job(&id[..10]).unwrap();
+        assert_eq!(job.next_action_at.as_deref(), Some("2026-08-20"));
+        assert_eq!(job.next_action_note.as_deref(), Some("email recruiter"));
+        assert_eq!(storage.due_jobs("2026-08-20").unwrap().len(), 1);
+        assert!(
+            storage
+                .set_next_action(&id[..10], Some("2026-08-25"), None)
+                .unwrap()
+        );
+        let rescheduled = storage.find_job(&id[..10]).unwrap();
+        assert_eq!(rescheduled.next_action_at.as_deref(), Some("2026-08-25"));
+        assert_eq!(
+            rescheduled.next_action_note.as_deref(),
+            Some("email recruiter")
+        );
+        assert!(storage.set_next_action(&id[..10], None, None).unwrap());
+        assert!(
+            storage
+                .find_job(&id[..10])
+                .unwrap()
+                .next_action_at
+                .is_none()
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn find_job_escapes_like_metacharacters() {
+        let path = temp_database("find-escape");
+        let storage = Storage::open(&path).unwrap();
+        let id = insert_job(&storage);
+
+        for identifier in ["%", "_", "\\"] {
+            let error = storage.find_job(identifier).unwrap_err().to_string();
+            assert!(error.contains("no job matches ID"), "{error}");
+        }
+        assert_eq!(storage.find_job(&id[..10]).unwrap().id, id);
         let _ = fs::remove_file(path);
     }
 
