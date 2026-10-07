@@ -20,7 +20,7 @@ VALID_STATUSES = {
     "closed",
     "stale",
 }
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -52,7 +52,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     status TEXT NOT NULL DEFAULT 'new',
     status_updated_at TEXT,
     status_manually_set INTEGER NOT NULL DEFAULT 0,
-    notes TEXT NOT NULL DEFAULT ''
+    notes TEXT NOT NULL DEFAULT '',
+    next_action_at TEXT,
+    next_action_note TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_status_score ON jobs(status, score DESC);
 CREATE INDEX IF NOT EXISTS idx_jobs_last_seen ON jobs(last_seen_at DESC);
@@ -99,6 +101,14 @@ def _record_event(
     )
 
 
+def _row_value(row: sqlite3.Row, key: str, default: object = None) -> object:
+    """Read a column safely while migrating older tracker schemas."""
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return default
+
+
 def _merge_identity_rows(
     connection: sqlite3.Connection, stable: str, rows: Iterable[sqlite3.Row]
 ) -> None:
@@ -124,22 +134,51 @@ def _merge_identity_rows(
         ),
     )
     notes = "\n".join(
-        dict.fromkeys(item["notes"].strip() for item in candidates if item["notes"].strip())
+        dict.fromkeys(
+            str(_row_value(item, "notes", "") or "").strip()
+            for item in candidates
+            if str(_row_value(item, "notes", "") or "").strip()
+        )
     )
-    connection.execute(
-        """
-        UPDATE jobs
-        SET status=?, status_updated_at=?, notes=?, first_seen_at=?, last_seen_at=?
-        WHERE fingerprint=?
-        """,
+    manually_owned = int(
+        any(
+            _row_value(
+                item,
+                "status_manually_set",
+                item["status"] in {"reviewed", "applied", "interview", "rejected", "offer"},
+            )
+            for item in candidates
+        )
+    )
+    actions = [
+        (_row_value(item, "next_action_at"), _row_value(item, "next_action_note"))
+        for item in candidates
+        if _row_value(item, "next_action_at")
+    ]
+    actions.sort(key=lambda item: str(item[0]))
+    next_action_at, next_action_note = actions[0] if actions else (None, None)
+    assignments = ["status=?", "status_updated_at=?"]
+    values = [tracking["status"], tracking["status_updated_at"]]
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(jobs)")}
+    if "status_manually_set" in columns:
+        assignments.append("status_manually_set=?")
+        values.append(manually_owned)
+    assignments.append("notes=?")
+    values.append(notes)
+    if "next_action_at" in columns:
+        assignments.extend(("next_action_at=?", "next_action_note=?"))
+        values.extend((next_action_at, next_action_note))
+    assignments.extend(("first_seen_at=?", "last_seen_at=?"))
+    values.extend(
         (
-            tracking["status"],
-            tracking["status_updated_at"],
-            notes,
             min(item["first_seen_at"] for item in candidates),
             max(item["last_seen_at"] for item in candidates),
             stable,
-        ),
+        )
+    )
+    connection.execute(
+        f"UPDATE jobs SET {', '.join(assignments)} WHERE fingerprint=?",
+        values,
     )
     obsolete = [
         row["fingerprint"]
@@ -245,6 +284,14 @@ def _migrate_schema_v3(connection: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_schema_v4(connection: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(jobs)")}
+    for name in ("next_action_at", "next_action_note"):
+        if name not in columns:
+            connection.execute(f"ALTER TABLE jobs ADD COLUMN {name} TEXT")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_jobs_next_action_at ON jobs(next_action_at)")
+
+
 def connect(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     existed = path.exists()
@@ -274,6 +321,11 @@ def connect(path: Path) -> sqlite3.Connection:
             with connection:
                 _migrate_schema_v3(connection)
                 connection.execute("PRAGMA user_version = 3")
+            version = 3
+        if version < 4:
+            with connection:
+                _migrate_schema_v4(connection)
+                connection.execute("PRAGMA user_version = 4")
         if not existed and os.name != "nt":
             path.chmod(0o600)
     except Exception:
@@ -298,8 +350,9 @@ def save_jobs(jobs: Iterable[Job], path: Path) -> int:
                     salary_min,salary_max,currency,salary_source,description,posted_at,
                     source,source_url,canonical_url,score,reasons,concerns,
                     verification_status,verification_source,replacement_url,replacement_title,
-                    first_seen_at,last_seen_at,status,status_manually_set
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    first_seen_at,last_seen_at,status,status_manually_set,
+                    next_action_at,next_action_note
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(fingerprint) DO UPDATE SET
                     title=excluded.title,
                     company=excluded.company,
@@ -368,6 +421,8 @@ def save_jobs(jobs: Iterable[Job], path: Path) -> int:
                     now,
                     "closed" if job.verification_status == "closed" else "new",
                     0,
+                    job.next_action_at,
+                    job.next_action_note,
                 ),
             )
             after = connection.execute(
@@ -404,6 +459,44 @@ def save_jobs(jobs: Iterable[Job], path: Path) -> int:
                     )
             count += 1
     return count
+
+
+def set_next_action(
+    path: Path,
+    identifier: str,
+    action_date: str | None,
+    note: str | None = None,
+) -> bool:
+    """Set or clear a local follow-up date and record the change in history."""
+    row = find_job(path, identifier)
+    action_date = action_date.strip() if action_date else None
+    note = note.strip() if note else None
+    # Rescheduling a dated action without a new note should not silently lose
+    # the existing instruction. Clearing the action explicitly also clears its
+    # note.
+    if action_date is not None and note is None:
+        note = row["next_action_note"]
+    if action_date is None and note:
+        raise ValueError("A follow-up note requires a date.")
+    if row["next_action_at"] == action_date and row["next_action_note"] == note:
+        return False
+    now = datetime.now(UTC).isoformat()
+    event_note = note or ("cleared" if action_date is None else "scheduled")
+    with closing(connect(path)) as connection, connection:
+        connection.execute(
+            "UPDATE jobs SET next_action_at=?, next_action_note=? WHERE fingerprint=?",
+            (action_date, note, row["fingerprint"]),
+        )
+        _record_event(
+            connection,
+            row["fingerprint"],
+            "next_action",
+            old_value=row["next_action_at"],
+            new_value=action_date,
+            note=event_note,
+            created_at=now,
+        )
+    return True
 
 
 def refresh_jobs(jobs: Iterable[Job], path: Path) -> int:
@@ -525,9 +618,18 @@ def get_jobs_by_fingerprints(path: Path, fingerprints: Iterable[str]) -> list[sq
 
 
 def find_job(path: Path, identifier: str) -> sqlite3.Row:
+    if not identifier.strip():
+        raise LookupError("Job ID must not be blank.")
+    # Fingerprints are hexadecimal, but callers may pass arbitrary text from
+    # a shell or a script. Escape LIKE metacharacters so an identifier such as
+    # ``%`` cannot broaden the lookup to every tracked job.
+    escaped_identifier = (
+        identifier.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
     with closing(connect(path)) as connection:
         rows = connection.execute(
-            "SELECT * FROM jobs WHERE fingerprint LIKE ?", (f"{identifier}%",)
+            "SELECT * FROM jobs WHERE fingerprint LIKE ? ESCAPE '\\'",
+            (f"{escaped_identifier}%",),
         ).fetchall()
     if not rows:
         raise LookupError(f"No job matches ID {identifier!r}")

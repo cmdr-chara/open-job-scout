@@ -93,6 +93,15 @@ pub fn write_markdown(jobs: &[Job], output: &Path) -> Result<PathBuf> {
                 nonempty_inline(&job.source).unwrap_or_else(|| "not provided".into())
             ),
             format!("- Verification: {}", job.verification),
+            format!(
+                "- Next action: {}{}",
+                job.next_action_at.as_deref().unwrap_or("not scheduled"),
+                job.next_action_note
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+                    .map(|value| format!(" — {}", inline(value)))
+                    .unwrap_or_default()
+            ),
             format!("- Reasons: {}", list_inline(&job.reasons)),
             format!("- Concerns: {}", list_inline(&job.concerns)),
             format!("- URL: <{}>", safe_url(preferred)),

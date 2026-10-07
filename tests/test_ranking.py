@@ -1,4 +1,5 @@
 import tomllib
+from datetime import date, timedelta
 from importlib.resources import files
 
 from open_job_scout.models import Job
@@ -22,6 +23,35 @@ def test_ranking_is_explainable() -> None:
     ranked = rank_job(job, config())
     assert ranked.score > 40
     assert any(reason.startswith("skills:") for reason in ranked.reasons)
+
+
+def test_fresh_listing_adds_explainable_bonus() -> None:
+    settings = config()
+    job = Job(
+        title="Backend Engineer",
+        company="Example",
+        source_url="https://example.test/fresh",
+        posted_at=date.today().isoformat(),
+    )
+
+    ranked = rank_job(job, settings)
+
+    assert ranked.score >= 10
+    assert "fresh listing: today (+10)" in ranked.reasons
+
+
+def test_future_listing_does_not_get_misleading_freshness_bonus() -> None:
+    settings = config()
+    job = Job(
+        title="Backend Engineer",
+        company="Example",
+        source_url="https://example.test/future",
+        posted_at=(date.today() + timedelta(days=1)).isoformat(),
+    )
+
+    ranked = rank_job(job, settings)
+
+    assert not any("fresh listing" in reason for reason in ranked.reasons)
 
 
 def test_excessive_experience_is_filtered() -> None:

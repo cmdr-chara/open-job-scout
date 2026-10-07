@@ -89,6 +89,28 @@ def test_fetch_current_run_by_fingerprint(tmp_path: Path) -> None:
     assert get_jobs_by_fingerprints(database, []) == []
 
 
+def test_find_job_treats_like_metacharacters_as_literal(tmp_path: Path) -> None:
+    database = tmp_path / "jobs.sqlite3"
+    first = sample_job()
+    second = Job(
+        title="Platform Engineer",
+        company="Another",
+        source_url="https://example.test/jobs/2",
+        score=20,
+    )
+    save_jobs([first, second], database)
+
+    for identifier in ("%", "_", "\\"):
+        try:
+            find_job(database, identifier)
+        except LookupError as exc:
+            assert "No job matches ID" in str(exc)
+        else:
+            raise AssertionError(f"LIKE metacharacter {identifier!r} matched a job")
+
+    assert find_job(database, first.fingerprint[:10])["fingerprint"] == first.fingerprint
+
+
 def test_legacy_canonical_fingerprint_is_migrated(tmp_path: Path) -> None:
     database = tmp_path / "jobs.sqlite3"
     job = sample_job()
@@ -157,6 +179,7 @@ def test_v01_direct_url_row_merges_on_first_refresh(tmp_path: Path) -> None:
     assert rows[0]["source_url"] == refreshed.source_url
     assert rows[0]["status"] == "applied"
     assert rows[0]["notes"] == "Preserve this application"
+    assert rows[0]["status_manually_set"] == 1
     events = list_job_events(database, refreshed.fingerprint[:10])
     assert any(event["note"] == "Preserve this application" for event in events)
 

@@ -20,7 +20,7 @@ Per installare `uv`, usa la
 Installa il comando direttamente dal repository pubblico:
 
 ```powershell
-uv tool install git+https://github.com/cmdr-chara/open-job-scout.git@v0.1.0
+uv tool install git+https://github.com/cmdr-chara/open-job-scout.git@v0.2.0
 jobscout --help
 ```
 
@@ -95,6 +95,8 @@ preferred_title_terms = ["software engineer", "backend", "python"]
 preferred_skills = ["python", "django", "fastapi", "postgresql", "docker"]
 junior_signals = ["junior", "graduate", "entry level", "new grad"]
 concern_signals = ["unpaid", "on-site only"]
+freshness_window_days = 30
+freshness_bonus = 10
 ```
 
 ```toml
@@ -182,7 +184,7 @@ stale
 Una ricerca successiva non sovrascrive gli stati importanti come `applied`,
 `interview`, `rejected` oppure `offer`.
 
-Lo schema v3 conserva anche una cronologia persistente per ogni offerta:
+Lo schema v4 conserva anche una cronologia persistente per ogni offerta e le azioni di follow-up locali:
 
 ```powershell
 jobscout history ID

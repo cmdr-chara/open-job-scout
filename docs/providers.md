@@ -27,7 +27,7 @@ The native search pipeline is:
 4. apply OpenJobScout filters;
 5. safely verify employer URLs and enrich ATS metadata;
 6. transparently rank retained jobs;
-7. upsert into the schema-v3 tracker without stealing manually managed statuses;
+7. upsert into the schema-v4 tracker without stealing manually managed statuses;
 8. mark old automatically managed jobs stale;
 9. write a Markdown report.
 

@@ -1,6 +1,6 @@
 [package]
 name = "openjobscout"
-version = "0.2.0-alpha.1"
+version = "0.2.0"
 edition = "2024"
 description = "Fast, local-first job discovery and application tracking"
 license = "MIT"

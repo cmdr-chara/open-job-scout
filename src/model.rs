@@ -166,6 +166,8 @@ pub struct Job {
     pub last_seen: String,
     pub status_updated_at: Option<String>,
     pub status_manually_set: bool,
+    pub next_action_at: Option<String>,
+    pub next_action_note: Option<String>,
     pub reasons: Vec<String>,
     pub concerns: Vec<String>,
     pub description: String,
@@ -306,6 +308,8 @@ pub fn demo_jobs() -> Vec<Job> {
                     status,
                     ApplicationStatus::New | ApplicationStatus::Closed | ApplicationStatus::Stale
                 ),
+                next_action_at: None,
+                next_action_note: None,
                 reasons: vec![
                     "Strong title match".into(),
                     "Python".into(),

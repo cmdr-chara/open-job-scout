@@ -20,7 +20,7 @@ Install `uv` by following its
 Install the command directly from the public repository:
 
 ```powershell
-uv tool install git+https://github.com/cmdr-chara/open-job-scout.git@v0.1.0
+uv tool install git+https://github.com/cmdr-chara/open-job-scout.git@v0.2.0
 ```
 
 Confirm that the command is available:
@@ -101,6 +101,8 @@ preferred_title_terms = ["software engineer", "backend", "python"]
 preferred_skills = ["python", "django", "fastapi", "postgresql", "docker"]
 junior_signals = ["junior", "graduate", "entry level", "new grad"]
 concern_signals = ["unpaid", "on-site only"]
+freshness_window_days = 30
+freshness_bonus = 10
 ```
 
 ```toml
@@ -183,7 +185,8 @@ stale
 A refreshed listing does not overwrite an `applied`, `interview`, `rejected`,
 or `offer` state.
 
-Schema v3 also stores an append-only event history for each job. Inspect it with:
+Schema v4 stores an append-only event history and an optional next-action date
+for each job. Inspect the history with:
 
 ```powershell
 jobscout history JOB_ID
@@ -219,7 +222,22 @@ Automatic `closed` jobs return to `new` when a later recheck proves they are
 active. Manual states remain authoritative, and `stale` remains stale until a
 new discovery sees the listing again.
 
-## 10. Generate reports and exports
+## 10. Capture a public job page
+
+When you find a role while browsing manually, save it without retyping the
+posting:
+
+```powershell
+jobscout capture https://careers.example.com/jobs/backend-engineer
+jobscout capture https://careers.example.com/jobs/backend-engineer --title "Backend Engineer" --json
+```
+
+Capture reads public page metadata and `JobPosting` JSON-LD, keeps the source
+URL and description in the local tracker, and never submits a form or enters
+an application flow. Use `--title`, `--company`, or `--location` when the page
+does not expose a field.
+
+## 11. Generate reports and exports
 
 ```powershell
 jobscout report
@@ -241,7 +259,20 @@ jobscout stats
 `stats` includes status, source, and work-mode counts, salary coverage, average
 score, and the highest-ranked new jobs.
 
-## 11. Import an existing CSV
+Schedule local follow-up actions so applications do not disappear into a notes
+file:
+
+```powershell
+jobscout follow-up JOB_ID 2026-10-14 --note "Ask recruiter about the salary band"
+jobscout due
+jobscout due --days 7 --json
+jobscout follow-up JOB_ID --clear
+```
+
+The date and note are stored in the local tracker, included in exports and
+reports, and surfaced as overdue or upcoming actions in `stats` and `insights`.
+
+## 12. Import an existing CSV
 
 OpenJobScout accepts JobSpy-compatible CSV columns:
 
@@ -258,7 +289,7 @@ An imported CSV can contain personal notes or a job-search history. Keep it
 outside version control; `data/` is ignored by the bundled `.gitignore` and is
 a good local location when working from this repository.
 
-## 12. Check local health
+## 13. Check local health
 
 Run the local diagnostic command before debugging search failures or manually
 inspecting the SQLite file:

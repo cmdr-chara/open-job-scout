@@ -33,3 +33,12 @@ def test_degree_policy_must_be_supported() -> None:
     settings["profile"]["degree_policy"] = ["penalize"]
     with pytest.raises(ValueError, match="ignore, penalize, or filter"):
         validate_config(settings)
+
+
+@pytest.mark.parametrize("value", [float("inf"), float("-inf"), float("nan")])
+def test_freshness_values_must_be_finite(value: float) -> None:
+    settings = default_config()
+    settings["ranking"]["freshness_bonus"] = value
+
+    with pytest.raises(ValueError, match=r"\[ranking\]\.freshness_bonus"):
+        validate_config(settings)

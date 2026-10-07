@@ -87,6 +87,27 @@ def test_queue_filters_and_export_options_parse() -> None:
     stats_args = build_parser().parse_args(["stats"])
     assert stats_args.command == "stats"
 
+    assert build_parser().parse_args(["list", "--json"]).json is True
+    assert build_parser().parse_args(["next", "--json"]).json is True
+    assert build_parser().parse_args(["stats", "--json"]).json is True
+    assert build_parser().parse_args(["insights", "--json"]).json is True
+    assert build_parser().parse_args(["report"]).limit is None
+    capture = build_parser().parse_args(
+        ["capture", "https://jobs.example.test/role", "--company", "Example", "--json"]
+    )
+    assert capture.url == "https://jobs.example.test/role"
+    assert capture.company == "Example"
+    assert capture.json is True
+    follow_up = build_parser().parse_args(
+        ["follow-up", "abc123", "2026-08-20", "--note", "email recruiter"]
+    )
+    assert follow_up.date == "2026-08-20"
+    assert follow_up.note == "email recruiter"
+    assert build_parser().parse_args(["follow-up", "abc123", "--clear"]).clear is True
+    due = build_parser().parse_args(["due", "--days", "7", "--json"])
+    assert due.days == 7
+    assert due.json is True
+
 
 def test_friendly_review_commands_parse() -> None:
     show = build_parser().parse_args(["show", "abc123", "--json", "--full"])

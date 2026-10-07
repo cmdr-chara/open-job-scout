@@ -2,7 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::{
     model::{ApplicationStatus, Job, JobEvent, demo_jobs},
-    safety::safe_http_url,
+    safety::safe_browser_url,
     storage::Storage,
 };
 
@@ -403,7 +403,7 @@ impl App {
         let Some(job) = self.selected_job() else {
             return;
         };
-        let Some(url) = safe_http_url(job.preferred_url()) else {
+        let Some(url) = safe_browser_url(job.preferred_url()) else {
             self.notice = Some("Selected job has no valid HTTP URL".into());
             return;
         };

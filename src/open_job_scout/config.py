@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import tomllib
@@ -83,6 +84,15 @@ def validate_config(config: dict[str, Any]) -> dict[str, Any]:
         "concern_signals",
     ):
         _string_list(ranking, "ranking", key, allow_empty=True)
+    for key in ("freshness_window_days", "freshness_bonus"):
+        value = ranking.get(key, 0)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        ):
+            raise ValueError(f"Config value [ranking].{key} must be a number >= 0.")
 
     salary = config.get("salary", {})
     if not isinstance(salary, Mapping):

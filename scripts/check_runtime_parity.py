@@ -14,8 +14,10 @@ from open_job_scout.database import (
     list_job_events,
     mark_job,
     save_jobs,
+    set_next_action,
 )
 from open_job_scout.models import Job
+from open_job_scout.tracker import tracker_insights
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "examples" / "config.example.toml"
@@ -156,6 +158,39 @@ def _check_work_mode_parity(binary: Path, directory: Path) -> None:
         )
 
 
+def _check_follow_up_parity(binary: Path, directory: Path) -> None:
+    database = directory / "follow-ups.db"
+    job = _sample_job("follow-up")
+    save_jobs([job], database)
+    set_next_action(database, job.fingerprint[:10], "2099-01-02", "check recruiter reply")
+    shown = _show(binary, database, job.fingerprint)
+    assert shown["next_action_at"] == "2099-01-02"
+    assert shown["next_action_note"] == "check recruiter reply"
+    due = json.loads(_run(binary, database, "due", "--days", "27000", "--json").stdout)
+    assert due and due[0]["fingerprint"] == job.fingerprint
+    _run(binary, database, "follow-up", job.fingerprint[:10], "--clear")
+    assert find_job(database, job.fingerprint[:10])["next_action_at"] is None
+
+
+def _check_stats_parity(binary: Path, directory: Path) -> None:
+    database = directory / "stats.db"
+    job = _sample_job("stats")
+    save_jobs([job], database)
+    mark_job(database, job.fingerprint[:10], "rejected", "parity rejection")
+    expected = tracker_insights(database)["funnel"]
+    actual = json.loads(_run(binary, database, "stats", "--json").stdout)["insights"]["funnel"]
+    for key in (
+        "reviewed_or_beyond",
+        "applied_or_beyond",
+        "interview_or_beyond",
+        "offers",
+        "review_to_application_pct",
+    ):
+        assert actual[key] == expected[key], (
+            f"Rust stats drift for {key}: expected {expected[key]}, got {actual[key]}"
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path, required=True)
@@ -169,8 +204,13 @@ def main() -> int:
         _check_rust_created_schema(binary, directory)
         _check_python_created_round_trip(binary, directory)
         _check_work_mode_parity(binary, directory)
+        _check_follow_up_parity(binary, directory)
+        _check_stats_parity(binary, directory)
 
-    print("Python/Rust runtime parity OK: schema, tracker round-trip, history, work mode")
+    print(
+        "Python/Rust runtime parity OK: schema, tracker round-trip, history, "
+        "work mode, follow-up, stats"
+    )
     return 0
 
 
