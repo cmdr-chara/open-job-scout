@@ -548,10 +548,11 @@ mod tests {
         let mut job = demo_jobs().remove(0);
         job.posted = OffsetDateTime::now_utc().date().to_string();
         rank_job(&mut job, &config());
-        assert!(job
-            .reasons
-            .iter()
-            .any(|reason| reason.starts_with("fresh listing: today (+10")));
+        assert!(
+            job.reasons
+                .iter()
+                .any(|reason| reason.starts_with("fresh listing: today (+10"))
+        );
     }
 
     #[test]
