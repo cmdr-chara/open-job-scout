@@ -853,21 +853,34 @@ mod tests {
         let path = temp_database("follow-up");
         let storage = Storage::open(&path).unwrap();
         let id = insert_job(&storage);
-        assert!(storage
-            .set_next_action(&id[..10], Some("2026-08-20"), Some("email recruiter"))
-            .unwrap());
+        assert!(
+            storage
+                .set_next_action(&id[..10], Some("2026-08-20"), Some("email recruiter"))
+                .unwrap()
+        );
         let job = storage.find_job(&id[..10]).unwrap();
         assert_eq!(job.next_action_at.as_deref(), Some("2026-08-20"));
         assert_eq!(job.next_action_note.as_deref(), Some("email recruiter"));
         assert_eq!(storage.due_jobs("2026-08-20").unwrap().len(), 1);
-        assert!(storage
-            .set_next_action(&id[..10], Some("2026-08-25"), None)
-            .unwrap());
+        assert!(
+            storage
+                .set_next_action(&id[..10], Some("2026-08-25"), None)
+                .unwrap()
+        );
         let rescheduled = storage.find_job(&id[..10]).unwrap();
         assert_eq!(rescheduled.next_action_at.as_deref(), Some("2026-08-25"));
-        assert_eq!(rescheduled.next_action_note.as_deref(), Some("email recruiter"));
+        assert_eq!(
+            rescheduled.next_action_note.as_deref(),
+            Some("email recruiter")
+        );
         assert!(storage.set_next_action(&id[..10], None, None).unwrap());
-        assert!(storage.find_job(&id[..10]).unwrap().next_action_at.is_none());
+        assert!(
+            storage
+                .find_job(&id[..10])
+                .unwrap()
+                .next_action_at
+                .is_none()
+        );
         let _ = fs::remove_file(path);
     }
 

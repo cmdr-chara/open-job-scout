@@ -235,7 +235,10 @@ fn validate_config(config: Config) -> Result<Config> {
         validate_string_list(values, key, true, false)?;
     }
     for (value, key) in [
-        (config.ranking.freshness_window_days, "[ranking].freshness_window_days"),
+        (
+            config.ranking.freshness_window_days,
+            "[ranking].freshness_window_days",
+        ),
         (config.ranking.freshness_bonus, "[ranking].freshness_bonus"),
     ] {
         if !value.is_finite() || value < 0.0 {

@@ -25,7 +25,8 @@
 - Add `jobscout stats` for pipeline, source, work-mode, salary, and top-new summaries.
 - Add filtered CSV and JSON exports for spreadsheets and local analysis.
 - Apply the richer queue filters to manually generated Markdown reports.
-- Upgrade the local database to schema v3 with durable per-job event history.
+- Upgrade the local database to schema v4 with durable per-job event history and
+  follow-up dates/notes.
 - Add `jobscout history` for discovery, status, verification, note, and migration events.
 - Add `jobscout recheck` to re-verify and re-rank tracked jobs without changing discovery
   timestamps; manual application states remain authoritative.
