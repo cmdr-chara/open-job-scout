@@ -66,12 +66,15 @@ uv run jobscout --help
 
 Download the archive for your platform from the [latest release](https://github.com/cmdr-chara/open-job-scout/releases/latest), unpack it, and put `jobscout` (or `jobscout.exe`) on your `PATH`.
 
-The release workflow currently publishes archives with names such as:
+The current `v0.2.0` release publishes these native archives:
 
 - `openjobscout-linux-x86_64.tar.gz`
 - `openjobscout-windows-x64.zip`
 - `openjobscout-darwin-arm64.tar.gz`
-- `openjobscout-darwin-x86_64.tar.gz`
+
+Choose the archive that matches your operating system and CPU architecture. Future
+releases may add more architecture variants; the exact asset names are listed on
+the release page.
 
 Each release provides the native `jobscout` binary archive together with a matching SHA-256 checksum file. If you prefer to build locally:
 
