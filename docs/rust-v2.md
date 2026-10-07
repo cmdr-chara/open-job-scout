@@ -30,8 +30,11 @@ jobscout export --format json --output jobs.json
 
 `export JOBS.json` remains supported as a positional-output form. Build the
 native binary with `cargo build --locked --release` or install it with
-`cargo install --path . --locked`. The `uv`/Python package remains available
-for compatibility until a native package distribution is introduced.
+`cargo install --path . --locked`. Prebuilt native archives for Linux x86_64,
+Windows x64, and macOS ARM64 are published on the
+[latest release](https://github.com/cmdr-chara/open-job-scout/releases/latest).
+The `uv`/Python package remains available when you need Python-only commands
+such as `capture`, `review`, or `insights`.
 
 Inside the TUI:
 
@@ -48,7 +51,6 @@ Python CI workflow and the strict Rust workflow run on `main`.
 
 ## Remaining release work
 
-The local Rust implementation and strict Linux workflow cover the current
-feature slice. Release follow-up still includes validation against real
-provider boards, realistic Python-created trackers, the Windows/macOS release
-matrix, and the remaining interactive UX edge cases.
+The release matrix now validates and publishes Linux, Windows, and macOS
+artifacts. Remaining follow-up covers validation against real provider boards,
+realistic Python-created trackers, and the remaining interactive UX edge cases.
