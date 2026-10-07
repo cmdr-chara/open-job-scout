@@ -1,461 +1,374 @@
 # OpenJobScout
 
-**Find, verify, rank, and track jobs locally.**
+**A local-first job search tracker that helps you find, verify, rank, and follow up on roles without losing the context around each application.**
 
 [![CI](https://github.com/cmdr-chara/open-job-scout/actions/workflows/ci.yml/badge.svg)](https://github.com/cmdr-chara/open-job-scout/actions/workflows/ci.yml)
 [![Python 3.11–3.12](https://img.shields.io/badge/Python-3.11%20%7C%203.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f.svg)](LICENSE)
 
-![OpenJobScout: local-first job search, verification, ranking, and tracking](docs/assets/openjobscout-social-preview.png)
+OpenJobScout keeps a searchable SQLite tracker on your computer. It combines job discovery, transparent ranking, public-page verification, application status, notes, durable history, and dated follow-up actions. It does **not** submit applications, bypass CAPTCHAs, or require an OpenJobScout account.
 
-> 🇮🇹 **Preferisci l'italiano?**
-> Leggi la **[guida completa in italiano](docs/getting-started.it.md)**.
-
-OpenJobScout searches job boards, filters and ranks listings with rules you can
-inspect, checks whether links are still live, and keeps your applications in a
-local SQLite database. There is no OpenJobScout account and no hosted server
-receiving your CV, notes, or search history.
-
-> Alpha software: always confirm a listing on the employer's official careers
-> page before applying.
-
-## Why OpenJobScout?
-
-- Local SQLite database; no account required.
-- Transparent keyword scoring, never presented as an "ATS score".
-- Search through JobSpy or import an existing CSV; each source fails independently.
-- Optional Firecrawl discovery for public employer careers sites, disabled by default
-  and enabled only with `FIRECRAWL_API_KEY`.
-- Conservative `remote`, `hybrid`, `onsite`, or `unknown` classification.
-- Link and public ATS verification, with employer-published compensation when
-  an ATS exposes it as structured data.
-- Expired results are retained as `closed`; a unique same-title Ashby successor
-  is shown as a suggestion and never substituted automatically.
-- Unreviewed records not seen for the configured interval become `stale`.
-- Application states: `new`, `reviewed`, `applied`, `interview`, `rejected`,
-  `offer`, `closed`, and `stale`. Manual states survive crawler refreshes.
-- Durable per-job history records discovery, verification changes, automatic
-  transitions, manual status changes, and notes.
-- Re-verify existing jobs without re-running discovery or changing
-  `last_seen_at` with `recheck`.
-- Filter the accumulated queue by status, work mode, source, score, or text and
-  sort it by score or recency.
-- Human-readable job details by default, with JSON retained for scripting.
-- Focused `next` and guided `review` workflows for working the queue without
-  repeatedly copying IDs between commands.
-- Open canonical or source URLs directly from the CLI and add notes without
-  changing application state.
-- Markdown reports plus portable CSV and JSON exports for local analysis.
-- `stats` summarizes the pipeline, source mix, work modes, salary coverage, and
-  highest-ranked new jobs.
-- `doctor` checks local configuration, SQLite integrity/schema, filesystem
-  permissions, writable report storage, source safety, and discovery dependencies.
-- No automatic applications.
-
-## Demo
-
-The animation uses the two fictional listings included in
-[`tests/fixtures/jobs.csv`](tests/fixtures/jobs.csv). No live job board is
-contacted for this demonstration.
+> **Alpha software:** verify the employer, role, location, compensation, and application page yourself before applying.
 
 ![OpenJobScout terminal walkthrough](docs/assets/openjobscout-demo.gif)
 
-## Quick start
+Prefer Italian? Read the [Italian getting-started guide](docs/getting-started.it.md).
 
-Requirements:
+## What it is good at
 
-- Python 3.11 or 3.12
-- [uv](https://docs.astral.sh/uv/)
+- Keeping every role, status change, note, and follow-up in one local tracker.
+- Ranking jobs with inspectable title, skill, experience, salary, concern, and freshness signals.
+- Capturing a public job page you found manually, without retyping the whole posting.
+- Rechecking existing URLs without pretending that a verification is a new discovery.
+- Preserving manual states such as `applied`, `interview`, `rejected`, and `offer` during refreshes.
+- Showing what needs attention today with `due`, `stats`, and `insights`.
+- Exporting filtered records as CSV, JSON, or Markdown for your own local workflow.
 
-Install the command directly from GitHub:
+## Choose your runtime
 
-```powershell
-uv tool install git+https://github.com/cmdr-chara/open-job-scout.git@v0.1.0
+OpenJobScout has two runtimes that share the SQLite tracker schema and core status semantics.
+
+| | Python compatibility runtime | Native Rust runtime |
+| --- | --- | --- |
+| Best for | Full discovery and the easiest setup | Fast local TUI, first-party ATS search, and portable binaries |
+| Install | `uv tool install git+https://github.com/cmdr-chara/open-job-scout.git` | Download a binary from [Releases](https://github.com/cmdr-chara/open-job-scout/releases/latest) or build with Cargo |
+| Discovery | JobSpy sources, CSV import, public URL capture, optional Firecrawl | Greenhouse, Lever, Ashby, Recruitee, and optional Firecrawl |
+| Review | `list`, `next`, `review`, browser open, notes, reports, exports | TUI plus scriptable tracker commands |
+| Shared data | Local SQLite, schema v4 | Local SQLite, schema v4 |
+| Use this when | You want the broadest source support and guided workflow | You already have provider board IDs or want the native release binary |
+
+The runtimes can use the same database. Do not run two writers against the same database at the same time while performing migrations or bulk imports.
+
+## Install
+
+### Python runtime
+
+Requirements: Python 3.11 or 3.12 and [uv](https://docs.astral.sh/uv/).
+
+```bash
+uv tool install git+https://github.com/cmdr-chara/open-job-scout.git@v0.2.0
+jobscout --help
 jobscout init
 ```
 
-The repository also ships a native Rust binary with the same SQLite tracker
-schema. To build or install that runtime locally:
+To install a specific tagged release, append `@TAG` to the Git URL, for example `@vX.Y.Z`.
 
-```powershell
+For development, clone the repository and use the project environment:
+
+```bash
+git clone https://github.com/cmdr-chara/open-job-scout.git
+cd open-job-scout
+uv sync --extra dev
+uv run jobscout --help
+```
+
+### Native Rust release
+
+Download the archive for your platform from the [latest release](https://github.com/cmdr-chara/open-job-scout/releases/latest), unpack it, and put `jobscout` (or `jobscout.exe`) on your `PATH`.
+
+The release workflow currently publishes archives with names such as:
+
+- `openjobscout-linux-x86_64.tar.gz`
+- `openjobscout-windows-x64.zip`
+- `openjobscout-darwin-arm64.tar.gz`
+- `openjobscout-darwin-x86_64.tar.gz`
+
+Each release provides the native `jobscout` binary archive together with a matching SHA-256 checksum file. If you prefer to build locally:
+
+```bash
+cargo test --locked --all-targets --all-features
 cargo build --locked --release
-cargo install --path . --locked
 ```
 
-The Python `uv` command remains supported for compatibility; the Rust binary
-is the native release target and is distributed separately in the tagged
-cross-platform release artifacts.
+The Rust binary does not provide the Python `init`, `capture`, `next`, `review`, or `insights` commands. It reads the same TOML shape and SQLite tracker, but its discovery path is configured first-party ATS boards and its review path is the native TUI plus the Rust command set below.
 
-The commands work in PowerShell, macOS, and Linux shells. OpenJobScout stores
-its configuration and data under `~/.openjobscout/` by default. On Unix-like
-systems newly initialized config and database files are restricted to the
-current user.
+## Five-minute Python setup
 
-The `init` command creates:
+### 1. Create a config
 
-```text
-~/.openjobscout/config.toml
+```bash
+jobscout init
 ```
 
-Edit that file before the first search. For example:
+This creates a config and database under `~/.openjobscout/` by default. On Windows, the equivalent directory is `%USERPROFILE%\\.openjobscout\\`.
+
+### 2. Edit the config before searching
+
+Open `~/.openjobscout/config.toml` and set your actual search terms, location, sources, filters, and ranking preferences. Start small:
 
 ```toml
 [search]
-terms = [
-  "junior backend developer",
-  "graduate software engineer",
-]
+terms = ["junior backend developer", "python software engineer"]
 sites = ["linkedin", "google"]
 location = "Italy"
 country_indeed = "Italy"
 results_per_term = 20
 max_age_days = 14
+
+[filters]
+require_remote = false
+blocked_title_terms = ["senior", "staff", "principal", "director"]
+max_required_years = 3
+
+[ranking]
+preferred_title_terms = ["backend", "python", "software engineer"]
+preferred_skills = ["python", "fastapi", "postgresql", "docker"]
+freshness_window_days = 30
+freshness_bonus = 10
 ```
 
-Run the first search:
+The complete annotated template is [examples/config.example.toml](examples/config.example.toml). The score is a review-queue heuristic, not an ATS score and not a prediction of an employer's decision.
 
-```powershell
+### 3. Search
+
+```bash
 jobscout search
 ```
 
-### Optional: search employer career sites with Firecrawl
+To import a local JobSpy-compatible file instead:
 
-The normal workflow does not need Firecrawl. To add it as a complementary source,
-export the API key and enable the existing config section:
-
-```powershell
-$env:FIRECRAWL_API_KEY = "fc-..."
+```bash
+jobscout import-csv jobs.csv
 ```
 
-```toml
-[firecrawl]
-enabled = true
-search_enabled = true
-search_limit_per_term = 8
-max_scrapes = 16
-career_urls = []
-interact_urls = []
-include_domains = []
-timeout_seconds = 45
-zero_data_retention = true
-```
+Both commands filter, deduplicate, optionally verify public URLs, rank retained roles, write them to SQLite, and create a timestamped Markdown report. Add `--no-verify` when you deliberately want to skip outgoing verification requests.
 
-OpenJobScout keeps JobSpy and the native Greenhouse, Lever, Ashby, and Recruitee API
-paths; Firecrawl results are normalized and enter the same local ranking, verification,
-SQLite, and report pipeline. Browser interaction is exact-URL opt-in and is not used for
-login, CAPTCHA bypass, personal-data entry, or application submission. See
-[Optional Firecrawl discovery](docs/firecrawl.md) for domain filters, known career URLs,
-privacy boundaries, API usage, and failure behavior.
+### 4. Start with the highest-ranked role
 
-## The everyday review loop
-
-The normal workflow no longer requires bouncing between a table and raw JSON.
-Ask OpenJobScout for the highest-priority new job:
-
-```powershell
+```bash
 jobscout next
-```
-
-`next` prints a readable summary with score, status, work mode, verification,
-salary, reasons, concerns, notes, links, a description preview, and useful
-follow-up commands.
-
-Open the employer/canonical page:
-
-```powershell
+jobscout show JOB_ID
 jobscout open JOB_ID
 ```
 
-Open the original job-board result instead when needed:
+`show` prints a readable summary by default. Add `--full` for the complete description or `--json` for scripting.
 
-```powershell
-jobscout open JOB_ID --source
+## Daily workflow
+
+### Capture a role you found yourself
+
+The Python runtime can save one public job page directly:
+
+```bash
+jobscout capture https://careers.example.com/jobs/backend-engineer
+jobscout capture https://careers.example.com/jobs/backend-engineer \
+  --company "Example Labs" --location "Milan" --json
 ```
 
-Record a thought without changing the application state:
+Capture reads public page metadata and `JobPosting` JSON-LD when available. Use `--title`, `--company`, or `--location` to fill a field that the page does not expose. It never submits a form or enters an application flow.
 
-```powershell
-jobscout note JOB_ID "Check the on-call requirement before applying"
-```
+### Review without losing your place
 
-Then update the workflow state when you actually make a decision:
-
-```powershell
-jobscout mark JOB_ID reviewed
-jobscout mark JOB_ID applied --note "Applied on the employer careers page"
-jobscout mark JOB_ID interview --note "Technical interview on Friday"
-```
-
-Continue immediately with:
-
-```powershell
-jobscout next
-```
-
-You can combine selection and browser opening:
-
-```powershell
-jobscout next --work-mode remote --min-score 70 --open
-```
-
-For a batch of jobs, use the guided review session instead:
-
-```powershell
-jobscout review
+```bash
+jobscout list --status new --work-mode remote --min-score 60
 jobscout review --work-mode remote --min-score 60 --limit 10
 ```
 
-For each job, `review` accepts simple actions:
+The guided `review` session supports opening a job, adding a note, marking a status, skipping, and quitting. Displaying a job does not change its status.
 
-```text
-o  open the job in your browser
-n  add a note without changing status
-r  mark reviewed and move on
-a  mark applied and move on
-x  mark rejected and move on
-c  mark closed and move on
-s  skip without changing anything
-q  quit the session
-?  show the action help
+Useful individual actions:
+
+```bash
+jobscout note JOB_ID "Check the on-call requirement before applying"
+jobscout mark JOB_ID reviewed
+jobscout mark JOB_ID applied --note "Applied on the employer careers page"
+jobscout mark JOB_ID interview --note "Technical interview on Friday"
+jobscout history JOB_ID
 ```
 
-The session never changes a job merely because it was displayed. Status changes
-happen only after an explicit status action.
+### Keep one next action per application
 
-## Inspect a job
-
-`show` is intended for humans by default:
-
-```powershell
-jobscout show JOB_ID
+```bash
+jobscout follow-up JOB_ID 2026-10-14 \
+  --note "Ask recruiter about the salary band"
+jobscout due
+jobscout due --days 7
+jobscout due --days 7 --json
+jobscout follow-up JOB_ID --clear
 ```
 
-Use the complete description when you want it:
+Follow-up dates and notes survive discovery refreshes and appear in job details, JSON/CSV/Markdown exports, `stats`, and `insights`.
 
-```powershell
-jobscout show JOB_ID --full
-```
+### Make a decision from the queue
 
-For scripts and local tooling, the old structured representation remains
-available explicitly:
-
-```powershell
-jobscout show JOB_ID --json
-```
-
-Short aliases are also available for frequently typed read commands:
-
-```powershell
-jobscout ls
-jobscout view JOB_ID
-jobscout log JOB_ID
-```
-
-## Example
-
-This is the output produced by importing the two listings in the bundled
-sample CSV. One matches the configured junior backend search; the senior role
-is filtered out.
-
-```text
-Received: 2
-Unique valid jobs: 2
-Accepted: 1
-Filtered out: 1
-Verification: unverified=1
-Stored or refreshed: 1
-
-ID          SCORE  STATUS     MODE     ROLE
-425a56c785   69.0  new        remote   Junior Python Backend Engineer - Example Labs
-```
-
-Each `search` and `import-csv` command also writes a timestamped Markdown
-snapshot automatically. Generate a fresh report from the current local tracker
-when you need one:
-
-```powershell
-jobscout report
-jobscout report --status interview
-```
-
-## Work the queue
-
-As the local database grows, filter the same tracker instead of repeating the
-search manually:
-
-```powershell
-jobscout list --status new --work-mode remote --min-score 60 --query python
-jobscout list --source linkedin --sort newest
-jobscout report --work-mode remote --min-score 70
-```
-
-Get a compact pipeline snapshot:
-
-```powershell
+```bash
 jobscout stats
+jobscout insights
+jobscout list --status applied --sort newest
+jobscout export --status applied --format csv --output applied.csv
 ```
 
-Export the current filtered view for a spreadsheet or another local tool. CSV
-is the default; JSON preserves list-valued fields such as reasons and concerns:
+Use `--json` on `list`, `next`, `show`, `due`, `history`, `stats`, and `insights` when another local tool needs structured output.
 
-```powershell
-jobscout export --status applied --format csv
-jobscout export --work-mode remote --min-score 70 --format json --output remote-jobs.json
+## Core Python commands
+
+| Command | Purpose |
+| --- | --- |
+| `init` | Create the local TOML config |
+| `search` | Discover, filter, verify, rank, and store jobs |
+| `import-csv FILE` | Import a JobSpy-compatible CSV |
+| `capture URL` | Save one public job page |
+| `list` / `ls` | Filter the local queue |
+| `next` | Show the highest-priority `new` job |
+| `review` | Work through a guided batch |
+| `show ID` / `view ID` | Inspect a tracked job |
+| `open ID` | Open the preferred public URL safely |
+| `note ID TEXT` | Append a note without changing status |
+| `mark ID STATUS` | Set the application state |
+| `follow-up ID DATE` | Schedule a next action |
+| `due` | List overdue and upcoming actions |
+| `history ID` / `log ID` | Inspect durable events |
+| `recheck` | Re-verify existing jobs without rediscovery |
+| `report` | Write a Markdown report |
+| `stats` | Print tracker counts and funnel metrics |
+| `insights` | Explain pipeline health and recommended actions |
+| `export` | Write filtered CSV or JSON |
+| `doctor` | Check config, database, permissions, and dependencies |
+
+Run `jobscout COMMAND --help` for every option. Most read and export commands accept status, work-mode, source, score, query, sort, limit, and `--json` filters where applicable.
+
+## Native Rust commands
+
+The native binary accepts global `--config PATH` and `--database PATH` overrides:
+
+```bash
+jobscout --config ~/.openjobscout/config.toml list --json
+jobscout --database ./jobs.sqlite3 stats --json
 ```
 
-Exports are written to the configured report directory unless `--output` is
-provided. `export` includes all matching jobs by default; pass `--limit N` when
-you only want the first N rows.
+Available Rust commands are:
 
-## Recheck and audit existing jobs
-
-`search` means the listing was found again by a configured source, so it updates
-the discovery timestamp. `recheck` has different semantics: it revisits the
-stored public job/ATS URL, refreshes verification metadata and the local score,
-and deliberately leaves `last_seen_at` unchanged.
-
-Recheck specific jobs:
-
-```powershell
-jobscout recheck 425a56c785 76be194aa1
+```text
+jobscout                 # open the TUI
+jobscout ui              # open the TUI explicitly
+jobscout search          # search configured ATS providers / Firecrawl
+jobscout list
+jobscout show ID
+jobscout mark ID STATUS [--note TEXT]
+jobscout note ID TEXT
+jobscout follow-up ID [DATE] [--note TEXT] [--clear]
+jobscout due [--days N] [--limit N] [--json]
+jobscout history ID [--limit N] [--json]
+jobscout import-csv FILE [--no-verify] [--workers N]
+jobscout report [--output PATH] [--limit N]
+jobscout rerank
+jobscout recheck [--workers N]
+jobscout stats [--json]
+jobscout export [OUTPUT] [--output PATH] [--format json|csv]
+jobscout doctor [--json]
+jobscout stale [--days N]
 ```
 
-Or recheck a filtered slice of the tracker. The default limit is 50 to avoid an
-accidental burst of network requests:
+Rust `search` needs at least one configured `[providers]` board identifier or an explicitly enabled `[firecrawl]` section. For example:
 
-```powershell
+```toml
+[providers]
+greenhouse = ["company-board-slug"]
+lever = ["company-site-slug"]
+ashby = ["company-board-slug"]
+recruitee = ["company-slug"]
+```
+
+The native TUI supports keyboard navigation, live search, opening a tracked URL, adding notes, viewing history, changing status, and reloading the tracker. See [docs/rust-v2.md](docs/rust-v2.md) for the current native-runtime details.
+
+## Optional Firecrawl discovery
+
+The normal Python workflow does not need Firecrawl. It is an explicit, optional source for public employer career pages and difficult JavaScript-rendered pages.
+
+```bash
+export FIRECRAWL_API_KEY="fc-..."
+```
+
+Then enable the `[firecrawl]` section in your config. Keep `zero_data_retention = true`, use domain allow-lists where possible, and review [docs/firecrawl.md](docs/firecrawl.md) before enabling it. The API key is read from the environment and is not written to the TOML file.
+
+Firecrawl discovery, like every other source, feeds the same local filtering, verification, ranking, and tracker pipeline. It does not submit applications or handle login and CAPTCHA flows.
+
+## Recheck, stale jobs, and history
+
+`search` means a source found the job again and may update its discovery timestamp. `recheck` revisits already stored public URLs and ATS data without claiming a new discovery:
+
+```bash
+jobscout recheck JOB_ID
 jobscout recheck --status new --work-mode remote --min-score 60
-jobscout recheck --status closed --limit 20
 ```
 
-Automatic `closed` jobs can return to `new` if a recheck proves the listing is
-active again. A manual application state such as `applied` or `interview` is not
-overwritten. A `stale` job also stays stale until discovery sees it again.
+Jobs that have not been seen for the configured interval can be marked `stale` automatically during discovery. The native runtime also exposes `stale --days N` directly. A manual application state remains authoritative during refreshes.
 
-The schema-v3 history table records these transitions separately from the
-legacy notes field:
+SQLite schema upgrades run automatically. Schema v4 stores next-action fields and an append-only event history for discovery, verification, status changes, notes, and follow-ups. Back up a database before deliberately testing a migration or running multiple versions against it.
 
-```powershell
-jobscout history 425a56c785
-jobscout history 425a56c785 --json
+## Privacy and safety
+
+- Config, SQLite data, notes, event history, reports, and imported CSV files stay on your machine.
+- Discovery and verification still make network requests to the sources and public URLs you configure.
+- Firecrawl receives only the search terms/location and public career URLs needed for the enabled operation; your local CV, notes, and application history are not uploaded by OpenJobScout.
+- Public URL checks reject malformed, credential-bearing, local, private, and other unsafe network targets; browser opening also validates DNS results immediately before launch.
+- The browser command opens a public URL; it does not enter credentials or application data.
+- CSV exports neutralize spreadsheet formula injection.
+- Never commit CVs, databases, reports, application answers, email exports, or real imported data. The repository's `data/` directory is intended for local files and is ignored by Git.
+
+See [SECURITY.md](SECURITY.md) for security reporting and source-specific limitations.
+
+## Troubleshooting
+
+### `jobscout` is not recognized
+
+Restart the terminal after a `uv tool install`, or run from a checkout:
+
+```bash
+uv run jobscout --help
 ```
 
-Existing databases migrate automatically. They receive one `snapshot` history
-event so the audit trail has a clear starting state; subsequent changes are
-recorded as individual events.
+### `search` finds nothing
 
-## Diagnose the local installation
+Run `jobscout doctor`, check the spelling of `terms` and `location`, start with one or two sources, and lower `results_per_term`. A source can fail or rate-limit independently. You can still use `capture`, `import-csv`, and the local tracker.
 
-Run a local health check before troubleshooting discovery or database problems:
+### Native Rust search says no source is configured
 
-```powershell
-jobscout doctor
-jobscout doctor --json
-```
+Add one or more board identifiers under `[providers]`, or explicitly enable Firecrawl and provide its key. The Rust runtime does not use the Python JobSpy `sites` list as a provider registry.
 
-`doctor` validates the configuration, reports disabled/unsafe source choices,
-checks the SQLite schema and `PRAGMA quick_check`, warns about permissive Unix
-config/database file modes, checks report-directory writability, confirms that JobSpy is
-importable in the Python runtime, and reports a missing `FIRECRAWL_API_KEY` when the
-optional hosted source is enabled. It does not perform a live job-board search.
+### A stored job is closed or stale
 
-JobSpy is installed as the default Python discovery engine. The native Rust search uses
-configured first-party ATS providers. The tracker and CSV importer remain usable when a
-particular job board is unavailable. The Indeed adapter is temporarily disabled because
-its current upstream implementation does not verify TLS certificates; see
-[SECURITY.md](SECURITY.md).
+Open the employer page yourself. Search indexes and job boards can retain expired listings. `recheck JOB_ID` can verify whether a closed listing becomes active again without changing its discovery timestamp.
 
-For every option, see the annotated
-[full configuration template](examples/config.example.toml).
+### Where are my files?
 
-For the complete walkthrough, configuration reference, data locations, and
-troubleshooting, read:
+By default:
+
+| File | Location |
+| --- | --- |
+| Config | `~/.openjobscout/config.toml` |
+| Database | `~/.openjobscout/jobs.sqlite3` |
+| Reports | `~/.openjobscout/reports/` |
+
+On Windows, use `%USERPROFILE%\\.openjobscout\\` instead of `~/.openjobscout/`.
+
+## Documentation and development
 
 - [Getting started](docs/getting-started.md)
-- [Guida introduttiva in italiano](docs/getting-started.it.md)
+- [Italian getting started](docs/getting-started.it.md)
+- [Configuration template](examples/config.example.toml)
+- [Providers and source behavior](docs/providers.md)
 - [Optional Firecrawl discovery](docs/firecrawl.md)
+- [Background operations](docs/background-operations.md)
+- [Native Rust runtime](docs/rust-v2.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
 
-## Install for development
+Run the checks before opening a pull request:
 
-```powershell
-git clone https://github.com/cmdr-chara/open-job-scout.git
-cd open-job-scout
+```bash
 uv sync --extra dev
-uv run jobscout init
-uv run jobscout search
-```
-
-## Commands
-
-```text
-jobscout --version
-jobscout init [--output PATH] [--force]
-jobscout search [--config PATH] [--no-verify]
-jobscout import-csv FILE [--config PATH] [--no-verify]
-jobscout list [--config PATH] [--status STATUS] [--work-mode MODE] [--source SOURCE]
-              [--min-score N] [--query TEXT] [--sort score|newest] [--limit N]
-jobscout next [--config PATH] [--work-mode MODE] [--source SOURCE] [--min-score N]
-              [--query TEXT] [--sort score|newest] [--open] [--full]
-jobscout review [--config PATH] [--work-mode MODE] [--source SOURCE] [--min-score N]
-                [--query TEXT] [--sort score|newest] [--limit N]
-jobscout show ID [--config PATH] [--full] [--json]
-jobscout open ID [--config PATH] [--source]
-jobscout note ID TEXT [--config PATH]
-jobscout mark ID STATUS [--config PATH] [--note TEXT]
-jobscout history ID [--config PATH] [--limit N] [--json]
-jobscout recheck [ID ...] [--config PATH] [--status STATUS] [--work-mode MODE]
-                 [--source SOURCE] [--min-score N] [--query TEXT]
-                 [--sort score|newest] [--limit N] [--workers N]
-jobscout report [--config PATH] [--status STATUS] [--work-mode MODE] [--source SOURCE]
-                [--min-score N] [--query TEXT] [--sort score|newest] [--limit N]
-                [--output PATH]
-jobscout stats [--config PATH]
-jobscout export [--config PATH] [--status STATUS] [--work-mode MODE] [--source SOURCE]
-                [--min-score N] [--query TEXT] [--sort score|newest] [--limit N]
-                [--format csv|json] [--output PATH]
-jobscout doctor [--config PATH] [--json]
-```
-
-By default, personal state is written beneath `~/.openjobscout/`. The repository
-does not need to contain a CV, database, generated report, or private config.
-
-## Privacy and network use
-
-Your configuration, SQLite database, reports, notes, event history, and any
-imported CSV stay on your machine. Put imported files in `data/` if you keep
-them beside the repository: that directory is ignored by Git. OpenJobScout does
-not submit a CV or an application.
-
-Discovery and verification do make network requests to the job boards you
-configure and to public job or ATS URLs in the results. When Firecrawl is explicitly
-enabled, the configured search terms/location and selected public career/job URLs are
-also sent to Firecrawl; the local tracker, CV, application history, and notes are not.
-`recheck` performs only the existing verification requests. `open` launches the chosen
-URL in your local default browser. Review the relevant services' terms and privacy
-notices before using them.
-
-## Scoring
-
-The score is a configurable prioritization heuristic based on title terms,
-skills, junior signals, concerns, and work-location evidence. It is intended to
-help order a review queue. It does not predict whether an employer's ATS or
-recruiter will accept an application.
-
-## Responsible use
-
-Job boards may rate-limit or prohibit some forms of automated access. Use modest
-query volumes, avoid repeated runs, review the terms of each source, and prefer
-public ATS APIs or official careers pages. OpenJobScout does not bypass
-authentication, CAPTCHAs, or access controls.
-
-## Development
-
-```powershell
-uv run pytest
+uv run python scripts/check_runtime_contract.py
 uv run ruff check .
+uv run pytest -q
+uv build
+cargo fmt --all --check
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-targets --all-features
 ```
 
-See [CHANGELOG.md](CHANGELOG.md), [CONTRIBUTING.md](CONTRIBUTING.md), and
-[SECURITY.md](SECURITY.md).
-Third-party attribution is recorded in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Python and Rust changes that touch the shared schema or tracker behavior must preserve cross-runtime compatibility. Use fictional jobs and temporary databases in tests.
+
+## License
+
+OpenJobScout is released under the [MIT License](LICENSE).

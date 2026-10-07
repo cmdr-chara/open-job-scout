@@ -1,5 +1,6 @@
 #[cfg(unix)]
 use std::fs;
+use std::net::{IpAddr, ToSocketAddrs};
 use std::path::Path;
 
 #[cfg(windows)]
@@ -36,7 +37,68 @@ pub fn safe_http_url(value: &str) -> Option<String> {
     {
         return None;
     }
+    let host = parsed.host_str()?.trim_end_matches('.').to_ascii_lowercase();
+    if host == "localhost"
+        || host.ends_with(".localhost")
+        || host.ends_with(".local")
+        || host.ends_with(".internal")
+        || host.chars().all(|character| {
+            character.is_ascii_digit()
+                || matches!(
+                    character,
+                    '.' | ':' | 'x' | 'X' | 'a'..='f' | 'A'..='F'
+                )
+        })
+    {
+        return None;
+    }
+    let ip_host = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(address) = ip_host.parse::<IpAddr>() {
+        if !is_public_ip(address) {
+            return None;
+        }
+    }
     Some(parsed.to_string())
+}
+
+/// Apply DNS-aware validation immediately before handing a URL to a browser.
+/// The generic URL validator is intentionally side-effect free for reports and
+/// exports; browser opening additionally rejects hostnames resolving to private
+/// or reserved networks.
+pub fn safe_browser_url(value: &str) -> Option<String> {
+    let value = safe_http_url(value)?;
+    let parsed = Url::parse(&value).ok()?;
+    let host = parsed.host_str()?;
+    let port = parsed.port_or_known_default()?;
+    let addresses = (host, port).to_socket_addrs().ok()?.collect::<Vec<_>>();
+    if addresses.is_empty() || addresses.iter().any(|address| !is_public_ip(address.ip())) {
+        return None;
+    }
+    Some(value)
+}
+
+fn is_public_ip(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => {
+            !address.is_private()
+                && !address.is_loopback()
+                && !address.is_link_local()
+                && !address.is_broadcast()
+                && !address.is_multicast()
+                && !address.is_unspecified()
+        }
+        IpAddr::V6(address) => {
+            if let Some(mapped) = address.to_ipv4() {
+                return is_public_ip(IpAddr::V4(mapped));
+            }
+            let first = address.segments()[0];
+            !address.is_loopback()
+                && !address.is_multicast()
+                && !address.is_unspecified()
+                && (first & 0xfe00) != 0xfc00
+                && (first & 0xffc0) != 0xfe80
+        }
+    }
 }
 
 pub(crate) fn secure_private_directory(path: &Path) -> Result<()> {
@@ -189,6 +251,10 @@ mod tests {
         );
         assert!(safe_http_url("javascript:alert(1)").is_none());
         assert!(safe_http_url("https://user:pass@example.com/job").is_none());
+        assert!(safe_http_url("http://127.0.0.1/private").is_none());
+        assert!(safe_http_url("http://[::ffff:127.0.0.1]/private").is_none());
+        assert!(safe_http_url("http://localhost/private").is_none());
+        assert!(safe_browser_url("http://127.0.0.1/private").is_none());
         assert!(safe_http_url("not a URL").is_none());
     }
 

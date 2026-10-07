@@ -38,11 +38,16 @@ pub fn deduplicate(jobs: Vec<Job>) -> Vec<Job> {
         }
         let key = job_dedup_key(&job);
         if let Some(index) = positions.get(&key).copied() {
-            let current = &unique[index];
-            if (job.canonical_url.is_some(), job.description.len())
-                > (current.canonical_url.is_some(), current.description.len())
-            {
-                unique[index] = job;
+            let should_replace = {
+                let current = &unique[index];
+                (job.canonical_url.is_some(), job.description.len())
+                    > (current.canonical_url.is_some(), current.description.len())
+            };
+            if should_replace {
+                let previous = std::mem::replace(&mut unique[index], job);
+                merge_duplicate(&mut unique[index], &previous);
+            } else {
+                merge_duplicate(&mut unique[index], &job);
             }
         } else {
             positions.insert(key, unique.len());
@@ -50,6 +55,42 @@ pub fn deduplicate(jobs: Vec<Job>) -> Vec<Job> {
         }
     }
     unique
+}
+
+fn merge_duplicate(primary: &mut Job, fallback: &Job) {
+    if primary.location.is_empty() {
+        primary.location = fallback.location.clone();
+    }
+    if primary.remote.is_none() {
+        primary.remote = fallback.remote;
+    }
+    if primary.work_mode == WorkMode::Unknown {
+        primary.work_mode = fallback.work_mode;
+    }
+    if primary.employment_type.is_none() {
+        primary.employment_type = fallback.employment_type.clone();
+    }
+    if primary.salary_min.is_none() {
+        primary.salary_min = fallback.salary_min;
+    }
+    if primary.salary_max.is_none() {
+        primary.salary_max = fallback.salary_max;
+    }
+    if primary.currency.is_none() {
+        primary.currency = fallback.currency.clone();
+    }
+    if primary.salary_source.is_none() {
+        primary.salary_source = fallback.salary_source.clone();
+    }
+    if primary.posted.is_empty() {
+        primary.posted = fallback.posted.clone();
+    }
+    if primary.canonical_url.is_none() {
+        primary.canonical_url = fallback.canonical_url.clone();
+    }
+    if fallback.description.len() > primary.description.len() {
+        primary.description = fallback.description.clone();
+    }
 }
 
 pub fn save_jobs(storage: &Storage, jobs: &[Job]) -> Result<usize> {
@@ -84,8 +125,9 @@ pub fn save_jobs(storage: &Storage, jobs: &[Job]) -> Result<usize> {
                 salary_min,salary_max,currency,salary_source,description,posted_at,
                 source,source_url,canonical_url,score,reasons,concerns,
                 verification_status,verification_source,replacement_url,replacement_title,
-                first_seen_at,last_seen_at,status,status_manually_set
-             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                first_seen_at,last_seen_at,status,status_manually_set,
+                next_action_at,next_action_note
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
              ON CONFLICT(fingerprint) DO UPDATE SET
                 title=excluded.title,
                 company=excluded.company,
@@ -153,6 +195,8 @@ pub fn save_jobs(storage: &Storage, jobs: &[Job]) -> Result<usize> {
                 &now,
                 initial_status,
                 0,
+                job.next_action_at.as_deref(),
+                job.next_action_note.as_deref(),
             ],
         )?;
 
@@ -267,6 +311,8 @@ fn row_to_job(headers: &StringRecord, record: &StringRecord) -> Result<Job> {
         last_seen: String::new(),
         status_updated_at: None,
         status_manually_set: false,
+        next_action_at: None,
+        next_action_note: None,
         reasons: Vec::new(),
         concerns: Vec::new(),
         description,
@@ -485,6 +531,9 @@ mod tests {
                 "job_url",
                 "job_url_direct",
                 "description",
+                "location",
+                "min_amount",
+                "currency",
             ],
             &[
                 "Backend",
@@ -492,6 +541,9 @@ mod tests {
                 "https://board-a.test/job",
                 "https://employer.test/job",
                 "short",
+                "Remote - Italy",
+                "50000",
+                "EUR",
             ],
         );
         let right = row(
@@ -513,6 +565,9 @@ mod tests {
         let jobs = deduplicate(vec![left, right]);
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].description, "a much richer description");
+        assert_eq!(jobs[0].location, "Remote - Italy");
+        assert_eq!(jobs[0].salary_min, Some(50_000.0));
+        assert_eq!(jobs[0].currency.as_deref(), Some("EUR"));
     }
 
     #[test]

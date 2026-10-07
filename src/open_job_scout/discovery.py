@@ -214,9 +214,34 @@ def deduplicate(jobs: Iterable[Job]) -> list[Job]:
         if job.title and job.company and job.source_url:
             key = job_dedup_key(job)
             current = unique.get(key)
-            if current is None or (
-                bool(job.canonical_url),
-                len(job.description),
-            ) > (bool(current.canonical_url), len(current.description)):
+            if current is None:
                 unique[key] = job
+                continue
+
+            # Mirrors often split useful fields across sources: one has the
+            # employer URL, another has salary/location, and a third has the
+            # complete description. Keep the best identity while coalescing
+            # non-conflicting metadata instead of silently discarding it.
+            preferred, fallback = (
+                (job, current)
+                if (bool(job.canonical_url), len(job.description))
+                > (bool(current.canonical_url), len(current.description))
+                else (current, job)
+            )
+            for field in ("location", "employment_type", "currency", "salary_source", "posted_at"):
+                if not getattr(preferred, field) and getattr(fallback, field):
+                    setattr(preferred, field, getattr(fallback, field))
+            if preferred.remote is None and fallback.remote is not None:
+                preferred.remote = fallback.remote
+            if preferred.work_mode == "unknown" and fallback.work_mode != "unknown":
+                preferred.work_mode = fallback.work_mode
+            if preferred.salary_min is None:
+                preferred.salary_min = fallback.salary_min
+            if preferred.salary_max is None:
+                preferred.salary_max = fallback.salary_max
+            if not preferred.canonical_url and fallback.canonical_url:
+                preferred.canonical_url = fallback.canonical_url
+            if len(fallback.description) > len(preferred.description):
+                preferred.description = fallback.description
+            unique[key] = preferred
     return list(unique.values())

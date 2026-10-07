@@ -1,4 +1,4 @@
-from open_job_scout.presentation import format_job_detail, preferred_job_url
+from open_job_scout.presentation import format_job_detail, preferred_job_url, terminal_text
 
 
 def sample_row() -> dict:
@@ -50,3 +50,7 @@ def test_human_detail_contains_review_information() -> None:
     assert "Review company first" in rendered
     assert "jobscout open abcdef1234" in rendered
     assert "jobscout show abcdef1234 --full" in rendered
+
+
+def test_terminal_text_replaces_control_sequences() -> None:
+    assert terminal_text("role\x1b[31m\x1b[0m") == "role�[31m�[0m"

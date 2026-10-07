@@ -31,6 +31,8 @@ EXPORT_FIELDS = (
     "first_seen_at",
     "last_seen_at",
     "status_updated_at",
+    "next_action_at",
+    "next_action_note",
     "notes",
     "reasons",
     "concerns",
@@ -82,6 +84,12 @@ def write_export(rows: Iterable[Mapping], output: Path, format: str) -> Path:
                 csv_record = dict(record)
                 for field in ("reasons", "concerns"):
                     csv_record[field] = json.dumps(record[field], ensure_ascii=False)
+                # Spreadsheet applications interpret leading formula characters
+                # as executable expressions. Keep exports data-only, matching
+                # the native runtime's CSV writer.
+                for field, value in csv_record.items():
+                    if isinstance(value, str) and value.startswith(("=", "+", "-", "@")):
+                        csv_record[field] = "'" + value
                 writer.writerow(csv_record)
         return output
     raise ValueError(f"Unsupported export format: {format}")

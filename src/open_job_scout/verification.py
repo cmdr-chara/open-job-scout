@@ -12,7 +12,7 @@ from html.parser import HTMLParser
 
 from .models import Job, normalize_text
 
-USER_AGENT = "OpenJobScout/0.1 (+https://github.com/cmdr-chara/open-job-scout)"
+USER_AGENT = "OpenJobScout/0.2 (+https://github.com/cmdr-chara/open-job-scout)"
 MAX_HTML_BYTES = 1_000_000
 MAX_JSON_BYTES = 5_000_000
 
@@ -122,7 +122,11 @@ class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
 def _open_public(request: urllib.request.Request, timeout: int):
     if not is_safe_public_url(request.full_url):
         raise urllib.error.URLError("target is not a public HTTP(S) URL")
-    return urllib.request.build_opener(SafeRedirectHandler()).open(request, timeout=timeout)
+    # Do not let ambient HTTP(S)_PROXY settings route a supposedly public
+    # verification request through an untrusted intermediary.
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), SafeRedirectHandler()
+    ).open(request, timeout=timeout)
 
 
 def _read_limited(response: object, maximum: int) -> bytes:

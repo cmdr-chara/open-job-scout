@@ -61,3 +61,27 @@ def test_review_session_skip_does_not_change_status(tmp_path: Path) -> None:
 
     assert decisions == 0
     assert find_job(database, job.fingerprint[:10])["status"] == "new"
+
+
+def test_review_session_reports_open_error_and_continues(tmp_path: Path) -> None:
+    database = tmp_path / "jobs.sqlite3"
+    job = Job(
+        title="Backend Engineer",
+        company="Example",
+        source_url="https://example.test/jobs/1",
+    )
+    save_jobs([job], database)
+    row = find_job(database, job.fingerprint[:10])
+    answers = iter(["o", "s"])
+    output: list[str] = []
+
+    decisions = run_review_session(
+        [row],
+        database,
+        open_job=lambda _item: (_ for _ in ()).throw(LookupError("unsafe URL")),
+        input_func=lambda _prompt: next(answers),
+        output=output.append,
+    )
+
+    assert decisions == 0
+    assert any("Could not open job" in line for line in output)

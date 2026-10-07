@@ -88,6 +88,45 @@ def test_deduplicate_prefers_richer_description() -> None:
     assert deduplicate([first, second])[0].description == "A much richer description"
 
 
+def test_deduplicate_coalesces_metadata_from_mirrors() -> None:
+    first = Job(
+        title="Engineer",
+        company="Example",
+        source_url="https://board.example/jobs/1",
+        canonical_url="https://careers.example/jobs/1",
+        description="A complete description with team and role details.",
+    )
+    second = Job(
+        title=first.title,
+        company=first.company,
+        source_url="https://mirror.example/jobs/1",
+        canonical_url=first.canonical_url,
+        location="Remote - Italy",
+        remote=True,
+        employment_type="fulltime",
+        salary_min=45_000,
+        salary_max=60_000,
+        currency="EUR",
+        salary_source="employer",
+        posted_at="2026-08-20",
+        description="Short mirror description",
+    )
+
+    result = deduplicate([first, second])
+
+    assert len(result) == 1
+    merged = result[0]
+    assert merged.description == first.description
+    assert merged.location == second.location
+    assert merged.remote is True
+    assert merged.employment_type == second.employment_type
+    assert merged.salary_min == second.salary_min
+    assert merged.salary_max == second.salary_max
+    assert merged.currency == second.currency
+    assert merged.salary_source == second.salary_source
+    assert merged.posted_at == second.posted_at
+
+
 def test_discovery_requests_html_descriptions(monkeypatch) -> None:
     captured: dict = {}
 

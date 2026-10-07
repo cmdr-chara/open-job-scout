@@ -481,6 +481,8 @@ fn job_from_extracted(value: Option<&Value>, source_url: &str) -> Option<Job> {
         last_seen: String::new(),
         status_updated_at: None,
         status_manually_set: false,
+        next_action_at: None,
+        next_action_note: None,
         reasons: Vec::new(),
         concerns: Vec::new(),
         description,
